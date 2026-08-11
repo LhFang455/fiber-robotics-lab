@@ -493,6 +493,7 @@ def test_thumb_keeps_the_original_two_joint_chain_and_reverses_only_its_root_dir
     assert "knuckle.position.set(...base)" in markup
     assert "root.rotation.z=spread" in markup
     assert "if(thumb){root.rotateY(-jointAngles[0]*Math.PI/180);}" in markup
+    assert "if(thumb){pivot.rotation.z=jointAngles[n]*Math.PI/180;}" in markup
     assert "pivot.rotation.y=-jointAngles[n]*Math.PI/180" in markup
     assert "thumbOverlay" not in markup
 
