@@ -1,0 +1,13 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.backups/
+.idea/
+
+# 同目录下的非网站工作资料
+*_qa/
+*.docx
+build_*.py
+finalize_disclosure.py
+format_patent_draft.py
