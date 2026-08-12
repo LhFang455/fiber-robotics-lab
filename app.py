@@ -839,7 +839,23 @@ with fbg_simplus_tab:
         st.markdown(r"""
 ### 1. 下载原项目
 
-请从原作者仓库获取完整程序、许可证与教程。macOS/Linux 终端复制执行：
+请从原作者仓库获取完整程序、许可证与教程。以下三种系统均可使用相同的 Git 地址；只需在各自的终端中复制对应命令。
+
+#### Windows（PowerShell）
+
+```powershell
+git clone https://github.com/benfrey/FBG-SimPlus.git
+cd FBG-SimPlus
+```
+
+#### macOS（Terminal）
+
+```bash
+git clone https://github.com/benfrey/FBG-SimPlus.git
+cd FBG-SimPlus
+```
+
+#### Linux（Bash）
 
 ```bash
 git clone https://github.com/benfrey/FBG-SimPlus.git
@@ -850,7 +866,26 @@ cd FBG-SimPlus
 
 ### 2. 配置独立 Python 环境
 
-FBG-SimPlus README 指定 Python 3.8。不要复用本网站的 Python 环境。macOS/Linux 在项目根目录复制执行：
+FBG-SimPlus README 指定 Python 3.8。不要复用本网站的 Python 环境。
+
+#### Windows（PowerShell）
+
+确认已安装 Python 3.8 后，在 `FBG-SimPlus` 根目录复制执行：
+
+```powershell
+py -3.8 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install PyQt5 scipy matplotlib sympy six numpy
+cd python
+python run.py
+```
+
+若 PowerShell 禁止激活脚本，可仅对当前用户执行一次 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`，再重新执行激活命令。
+
+#### macOS（Terminal）
+
+确认已安装 Python 3.8 后，在 `FBG-SimPlus` 根目录复制执行：
 
 ```bash
 python3.8 -m venv .venv
@@ -861,20 +896,20 @@ cd python
 python run.py
 ```
 
-Windows PowerShell（已安装 Python 3.8）复制执行：
+#### Linux（Bash）
 
-```powershell
-git clone https://github.com/benfrey/FBG-SimPlus.git
-cd FBG-SimPlus
-py -3.8 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+确认已安装 Python 3.8 后，在 `FBG-SimPlus` 根目录复制执行：
+
+```bash
+python3.8 -m venv .venv
+source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install PyQt5 scipy matplotlib sympy six numpy
 cd python
 python run.py
 ```
 
-若找不到 `python3.8` 或 `py -3.8`，请先安装 Python 3.8。该原项目以 Python 3.8 为目标；更高版本的兼容性不在此页保证。
+若找不到 Windows 的 `py -3.8`，或 macOS/Linux 的 `python3.8`，请先安装 Python 3.8。该原项目以 Python 3.8 为目标；更高版本的兼容性不在此页保证。
 
 ### 3. 准备并检查 COMSOL 输入
 
