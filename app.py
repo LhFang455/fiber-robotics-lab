@@ -835,6 +835,66 @@ with fbg_simplus_tab:
         "**使用步骤：** 1. 在 COMSOL 沿光纤路径导出位置、`elogxx`、`elogyy`、`elogzz`、`sx`、`sy`、`sz`、`T` 八列文本；"
         "2. 在本页上传并检查数据；3. 将同一原始文本在本机独立导入 FBG-SimPlus，按其文档设置 FBG 阵列并生成光谱。"
     )
+    with st.expander("完整安装与使用说明（在本机独立运行 FBG-SimPlus）", expanded=False):
+        st.markdown(r"""
+### 1. 下载原项目
+
+请从原作者仓库获取完整程序、许可证与教程。macOS/Linux 终端复制执行：
+
+```bash
+git clone https://github.com/benfrey/FBG-SimPlus.git
+cd FBG-SimPlus
+```
+
+也可在原仓库选择 **Code → Download ZIP**，解压后进入 `FBG-SimPlus` 目录。本网站不提供其源码或安装包。
+
+### 2. 配置独立 Python 环境
+
+FBG-SimPlus README 指定 Python 3.8。不要复用本网站的 Python 环境。macOS/Linux 在项目根目录复制执行：
+
+```bash
+python3.8 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install PyQt5 scipy matplotlib sympy six numpy
+cd python
+python run.py
+```
+
+Windows PowerShell（已安装 Python 3.8）复制执行：
+
+```powershell
+git clone https://github.com/benfrey/FBG-SimPlus.git
+cd FBG-SimPlus
+py -3.8 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install PyQt5 scipy matplotlib sympy six numpy
+cd python
+python run.py
+```
+
+若找不到 `python3.8` 或 `py -3.8`，请先安装 Python 3.8。该原项目以 Python 3.8 为目标；更高版本的兼容性不在此页保证。
+
+### 3. 准备并检查 COMSOL 输入
+
+在 COMSOL 中沿光纤路径导出空格分隔 `.txt`。数值列依次为：位置、`solid.elogxx`、`solid.elogyy`、`solid.elogzz`、`solid.sx`、`solid.sy`、`solid.sz`、`T`。位置单位只能统一为 m 或 mm；应力单位为 Pa，温度为 K。
+
+先用本页的“下载八列 COMSOL 导出模板”和上传框预检。预检仅检查八列、数值有效性和位置递增性，不替代 FEM 建模、材料参数或 FBG 标定验证。
+
+### 4. 在应用内生成光谱
+
+1. 在 **Select Stressed/Strained Path Files** 区域点击 **Add Files**，选中导出的 `.txt`。
+2. 设置 **Skip Rows** 为文件开头元数据和表头的行数。原仓库教程 `tutorial/tut-export.txt` 的 `%` 开头元数据共有 7 行，教程文件填 `7`；你的文件按实际行数填写。
+3. 在 **Path Distance Input Units** 选择第一列实际单位 `[m]` 或 `[mm]`。
+4. 设置 FBG 数量、每个 FBG 的路径位置、FBG 长度和初始 Bragg 波长；位置单位必须与第 3 步一致。
+5. 按你的模型设置均匀/非均匀应变、温度模拟、宿主热膨胀系数及其他光学参数。示例参数不等同于真实实验标定值。
+6. 点击 **Generate** 计算模拟结果，点击 **Plot** 查看反射谱；完整参数含义请查阅原仓库的 `documentation.pdf` 和 `tutorial/`。
+
+### 5. 已知限制与署名
+
+原作者已说明：谱图绘制可能不稳定、macOS 退出时可能需要强制结束、图片保存可能不稳定。使用该软件的方法或结果时，请保留本页顶部的 Frey 等人论文引用、原项目链接与 GPL-3.0 许可说明。
+""")
     template = (
         "% COMSOL export compatible with the FBG-SimPlus public tutorial\n"
         "% position_m elogxx elogyy elogzz sx_pa sy_pa sz_pa temperature_k\n"

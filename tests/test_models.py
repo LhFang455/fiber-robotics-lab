@@ -50,8 +50,15 @@ def test_app_exposes_the_fbg_simplus_compatibility_module_and_attribution():
 
     assert "FBG-SimPlus 兼容" in source
     assert "benfrey/FBG-SimPlus" in source
+    assert "git clone https://github.com/benfrey/FBG-SimPlus.git" in source
     assert "GPL-3.0" in source
     assert "Frey, B., Snyder, P., Ziock, K., & Passian, A. (2021)" in source
+    assert "python3.8 -m venv .venv" in source
+    assert "python -m pip install PyQt5 scipy matplotlib sympy six numpy" in source
+    assert "python run.py" in source
+    assert "Skip Rows" in source
+    assert "Path Distance Input Units" in source
+    assert "Generate" in source
 
 
 def test_fbg_shift_combines_strain_and_temperature():
