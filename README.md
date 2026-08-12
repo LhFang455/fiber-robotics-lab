@@ -26,4 +26,4 @@ FBG 波长变化采用：`ΔλB = λB[(1 − pe)ε + kTΔT]`。网站还以解�
 
 ## 迁移、公开部署与 FBG-SimPlus
 
-从新电脑迁移、部署公开版本，以及独立安装和使用 FBG-SimPlus 的完整复制粘贴步骤见：[迁移与 FBG-SimPlus 使用说明](docs/MIGRATION_AND_FBG_SIMPLUS.md)。本仓库不包含 FBG-SimPlus 源码；兼容页只检查其公开教程风格的 COMSOL 输入文本，并保留原作者署名与 GPL-3.0 许可边界。
+从新电脑迁移、部署公开版本，以及独立安装和使用 FBG-SimPlus 的完整复制粘贴步骤见：[迁移与 FBG-SimPlus 使用说明](docs/MIGRATION_AND_FBG_SIMPLUS.md)。本仓库不包含 FBG-SimPlus 源码；兼容页处理其所需的通用八列文本数据，并保留原作者署名与 GPL-3.0 许可边界。

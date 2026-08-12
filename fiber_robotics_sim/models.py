@@ -5,27 +5,39 @@ from __future__ import annotations
 import numpy as np
 
 
-def parse_fbg_simplus_comsol_export(text: str) -> dict[str, np.ndarray | int]:
-    """Parse the public FBG-SimPlus tutorial-style COMSOL text export.
+def parse_fbg_simplus_comsol_export(
+    text: str, delimiter: str = "自动识别", skip_rows: int = 0
+) -> dict[str, np.ndarray | int | str]:
+    """Parse a generic FBG-SimPlus-compatible eight-column text data export.
 
-    This is an independent input-format reader.  It does not import, execute,
-    reproduce, or modify FBG-SimPlus, and it deliberately stops before any
-    reflection-spectrum calculation.
+    Accept whitespace, CSV, or tab-separated text.  This independent reader
+    does not import, execute, reproduce, or modify FBG-SimPlus, and it stops
+    before any reflection-spectrum calculation.
     """
+    separators = {"空白字符": None, "逗号（CSV）": ",", "制表符（TSV）": "\t"}
+    if delimiter not in {"自动识别", *separators}:
+        raise ValueError("不支持的分隔符选项")
+    if skip_rows < 0:
+        raise ValueError("跳过行数不能为负数")
+    source_lines = text.splitlines()[skip_rows:]
+    data_lines = [line.strip() for line in source_lines if line.strip() and not line.lstrip().startswith(("%", "#"))]
+    if not data_lines:
+        raise ValueError("FBG-SimPlus 兼容输入未包含数据行")
+    selected_delimiter = delimiter
+    if delimiter == "自动识别":
+        first_line = data_lines[0]
+        selected_delimiter = "逗号（CSV）" if "," in first_line else "制表符（TSV）" if "\t" in first_line else "空白字符"
+
     rows: list[list[float]] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("%"):
-            continue
-        fields = stripped.split()
+    separator = separators[selected_delimiter]
+    for line in data_lines:
+        fields = line.split() if separator is None else [field.strip() for field in line.split(separator)]
         if len(fields) != 8:
             raise ValueError("FBG-SimPlus 兼容输入的每个数据行必须包含八列")
         try:
             rows.append([float(field) for field in fields])
         except ValueError as error:
             raise ValueError("FBG-SimPlus 兼容输入包含无法读取的数值") from error
-    if not rows:
-        raise ValueError("FBG-SimPlus 兼容输入未包含数据行")
     values = np.asarray(rows, dtype=float)
     if not np.all(np.isfinite(values)):
         raise ValueError("FBG-SimPlus 兼容输入不能包含 NaN 或无穷值")
@@ -36,8 +48,16 @@ def parse_fbg_simplus_comsol_export(text: str) -> dict[str, np.ndarray | int]:
         "longitudinal_strain": values[:, 1],
         "transverse_stress_pa": values[:, 5:7],
         "temperature_k": values[:, 7],
+        "input_values": values,
         "sample_count": int(values.shape[0]),
+        "source_delimiter": selected_delimiter,
     }
+
+
+def fbg_simplus_normalised_text(result: dict[str, np.ndarray | int | str]) -> str:
+    """Write validated data as the whitespace-separated eight-column input FBG-SimPlus reads."""
+    values = np.asarray(result["input_values"], dtype=float)
+    return "\n".join(" ".join(f"{value:.12g}" for value in row) for row in values) + "\n"
 
 
 def auto_grasp_phase(elapsed_seconds: float) -> str:

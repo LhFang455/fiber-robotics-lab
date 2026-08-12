@@ -819,8 +819,8 @@ with distributed_tab:
     st.caption("不同机制的空间分辨率、测量距离、采样速度与温度—应变交叉敏感性不同；此处用于机制与数据形态比较，不代表具体商用解调设备指标。")
 
 with fbg_simplus_tab:
-    st.subheader("FBG-SimPlus 兼容：FEM 输入检查与交接")
-    st.caption("本页独立读取公开教程所示的 COMSOL 文本输入，用于数据检查和预览；不包含、复制、执行或修改 FBG-SimPlus 源代码，也不在本网站生成其反射谱。")
+    st.subheader("FBG-SimPlus 兼容：通用八列数据适配")
+    st.caption("本页读取 FBG-SimPlus 所需的八列数值数据并进行标准化；不要求特定仿真软件，不包含、复制、执行或修改 FBG-SimPlus 源代码，也不在本网站生成其反射谱。")
     st.markdown(
         "**出处与许可：** [FBG-SimPlus V1.0（Ben Frey 等）](https://github.com/benfrey/FBG-SimPlus) "
         "采用 [GNU GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)。本网站仅做独立的数据格式兼容；"
@@ -831,10 +831,17 @@ with fbg_simplus_tab:
         "*Semicomputational calculation of Bragg shift in stratified materials*. "
         "Physical Review E, 104(5), 055307."
     )
-    st.markdown(
-        "**使用步骤：** 1. 在 COMSOL 沿光纤路径导出位置、`elogxx`、`elogyy`、`elogzz`、`sx`、`sy`、`sz`、`T` 八列文本；"
-        "2. 在本页上传并检查数据；3. 将同一原始文本在本机独立导入 FBG-SimPlus，按其文档设置 FBG 阵列并生成光谱。"
-    )
+    st.markdown("""
+**可输入并处理：**
+
+- **空白分隔 `.txt` / `.dat`**：若已是八列数值，可直接上传并下载标准化版本；
+- **逗号分隔 `.csv`** 或 **制表符文本**：选择相应分隔符、跳过表头行后上传；网站会转换为 FBG-SimPlus 读取的空白分隔文本；
+- **任意 FEM 或自定义脚本的路径数据**：只要导出为上述文本形式且列含义一致即可；来源可以是任意仿真软件或实验预处理脚本。
+
+**不能直接输入：** Excel `.xlsx`、原生模型文件（例如 `.mph`、`.odb`、`.rst`）和图像/PDF。请先在原软件或表格软件中导出为 CSV、制表符或空白分隔文本，再在本页处理。
+
+固定八列依次为：`位置`、`εxx`、`εyy`、`εzz`、`σxx`、`σyy`、`σzz`、`温度`。位置统一使用 m 或 mm；三个应变无量纲；三个正应力为 Pa；温度为 K。
+""")
     with st.expander("完整安装与使用说明（在本机独立运行 FBG-SimPlus）", expanded=False):
         st.markdown(r"""
 ### 1. 下载原项目
@@ -891,11 +898,11 @@ python run.py
 
 若找不到 Windows 的 `py -3.8`，或 macOS/Linux 的 `python3.8`，请先安装 Python 3.8。该原项目以 Python 3.8 为目标；更高版本的兼容性不在此页保证。
 
-### 3. 准备并检查 COMSOL 输入
+### 3. 准备并检查通用八列输入
 
-在 COMSOL 中沿光纤路径导出空格分隔 `.txt`。数值列依次为：位置、`solid.elogxx`、`solid.elogyy`、`solid.elogzz`、`solid.sx`、`solid.sy`、`solid.sz`、`T`。位置单位只能统一为 m 或 mm；应力单位为 Pa，温度为 K。
+从任意 FEM 软件、实验预处理脚本或表格软件导出数据。数据必须按如下顺序给出：位置、`εxx`、`εyy`、`εzz`、`σxx`、`σyy`、`σzz`、温度。支持空白分隔 `.txt/.dat`、CSV 与制表符文本；通过本页将其标准化为 FBG-SimPlus 所需的空白分隔八列 `.txt`。
 
-先用本页的“下载八列 COMSOL 导出模板”和上传框预检。预检仅检查八列、数值有效性和位置递增性，不替代 FEM 建模、材料参数或 FBG 标定验证。
+先用本页的模板和上传框预检。预检仅检查八列、数值有效性和位置递增性，不替代 FEM 建模、材料参数或 FBG 标定验证。
 
 ### 4. 在应用内生成光谱
 
@@ -911,22 +918,30 @@ python run.py
 原作者已说明：谱图绘制可能不稳定、macOS 退出时可能需要强制结束、图片保存可能不稳定。使用该软件的方法或结果时，请保留本页顶部的 Frey 等人论文引用、原项目链接与 GPL-3.0 许可说明。
 """)
     template = (
-        "% COMSOL export compatible with the FBG-SimPlus public tutorial\n"
-        "% position_m elogxx elogyy elogzz sx_pa sy_pa sz_pa temperature_k\n"
+        "% Generic eight-column input compatible with FBG-SimPlus\n"
+        "% position_m exx eyy ezz sxx_pa syy_pa szz_pa temperature_k\n"
         "0.0000 0.002000 0.000100 -0.000200 100.0 20.0 -10.0 293.15\n"
         "0.0010 0.001000 0.000200 -0.000100 80.0 15.0 -8.0 293.15\n"
     )
-    st.download_button("下载八列 COMSOL 导出模板", template.encode("utf-8"), "fbg_simplus_comsol_export_template.txt", "text/plain")
-    uploaded_export = st.file_uploader("上传 COMSOL 导出文本（.txt）", type=["txt"], key="fbg_simplus_comsol_export")
+    st.download_button("下载通用八列文本模板", template.encode("utf-8"), "fbg_simplus_eight_column_template.txt", "text/plain")
+    input_left, input_right = st.columns(2)
+    with input_left:
+        input_delimiter = st.selectbox("输入分隔符", ["自动识别", "空白字符", "逗号（CSV）", "制表符（TSV）"], key="fbg_simplus_delimiter")
+    with input_right:
+        input_skip_rows = st.number_input("跳过文件开头行数", min_value=0, value=0, step=1, key="fbg_simplus_skip_rows")
+    uploaded_export = st.file_uploader("上传八列数据（.txt / .dat / .csv）", type=["txt", "dat", "csv"], key="fbg_simplus_input")
     if uploaded_export is not None:
         try:
-            parsed_export = models.parse_fbg_simplus_comsol_export(uploaded_export.getvalue().decode("utf-8-sig"))
+            parsed_export = models.parse_fbg_simplus_comsol_export(
+                uploaded_export.getvalue().decode("utf-8-sig"), input_delimiter, int(input_skip_rows)
+            )
         except (UnicodeDecodeError, ValueError) as error:
             st.error(f"无法作为 FBG-SimPlus 兼容输入读取：{error}")
         else:
-            st.success(f"已通过格式检查：{parsed_export['sample_count']} 个 FEM 采样点。请在 FBG-SimPlus 中独立完成光谱仿真。")
+            st.success(f"已通过格式检查：{parsed_export['sample_count']} 个采样点；识别为{parsed_export['source_delimiter']}。可下载标准化文本后导入 FBG-SimPlus。")
             st.plotly_chart(visuals.fbg_simplus_input_figure(parsed_export), width="stretch")
-            st.info("检查范围仅限文本结构、数值有效性和位置递增性；应变/应力分量的物理含义、单位和 FBG 参数仍需按你的 COMSOL 模型与 FBG-SimPlus 文档确认。")
+            st.download_button("下载标准化八列文本（供 FBG-SimPlus 导入）", models.fbg_simplus_normalised_text(parsed_export).encode("utf-8"), "fbg_simplus_normalised_input.txt", "text/plain")
+            st.info("检查范围仅限文本结构、数值有效性和位置递增性；应变/应力分量的物理含义、单位和 FBG 参数仍需由数据来源和 FBG-SimPlus 文档确认。")
 
 with polarization_tab:
     st.subheader("偏振与干涉传感：偏振态、旋转与微腔光程差")

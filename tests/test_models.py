@@ -10,6 +10,7 @@ import fiber_robotics_sim.visuals as visuals
 
 
 FBG_SIMPLUS_TUTORIAL_EXPORT = """% Model: COMSOL tutorial\n% x solid.elogxx solid.elogyy solid.elogzz solid.sx solid.sy solid.sz T\n0.0000 0.0020 0.0001 -0.0002 100.0 20.0 -10.0 293.15\n0.0010 0.0010 0.0002 -0.0001 80.0 15.0 -8.0 294.15\n"""
+FBG_SIMPLUS_CSV_EXPORT = """position,exx,eyy,ezz,sxx,syy,szz,temperature\n0.0000,0.0020,0.0001,-0.0002,100.0,20.0,-10.0,293.15\n0.0010,0.0010,0.0002,-0.0001,80.0,15.0,-8.0,294.15\n"""
 
 
 def test_fbg_simplus_parser_reads_the_public_tutorial_column_order():
@@ -29,6 +30,18 @@ def test_fbg_simplus_parser_rejects_invalid_columns_and_nonmonotonic_positions()
         models.parse_fbg_simplus_comsol_export(
             "0 0 0 0 0 0 0 293.15\n0 0 0 0 0 0 0 293.15"
         )
+
+
+def test_fbg_simplus_parser_accepts_csv_after_skipping_a_header_and_normalises_it():
+    result = models.parse_fbg_simplus_comsol_export(
+        FBG_SIMPLUS_CSV_EXPORT, delimiter="逗号（CSV）", skip_rows=1
+    )
+
+    assert result["source_delimiter"] == "逗号（CSV）"
+    assert np.array_equal(result["position_m"], np.array([0.0, .001]))
+    assert models.fbg_simplus_normalised_text(result).splitlines()[0].split() == [
+        "0", "0.002", "0.0001", "-0.0002", "100", "20", "-10", "293.15"
+    ]
 
 
 def test_fbg_simplus_input_figure_exposes_strain_stress_and_temperature():
@@ -58,6 +71,11 @@ def test_app_exposes_the_fbg_simplus_compatibility_module_and_attribution():
     assert "python run.py" in source
     assert "Windows（PowerShell）" in source
     assert "macOS / Linux（Terminal / Bash）" in source
+    assert "自动识别" in source
+    assert "逗号（CSV）" in source
+    assert "跳过文件开头行数" in source
+    assert "标准化八列文本" in source
+    assert "原生模型文件" in source
     assert "Skip Rows" in source
     assert "Path Distance Input Units" in source
     assert "Generate" in source
