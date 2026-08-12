@@ -839,7 +839,7 @@ with fbg_simplus_tab:
         st.markdown(r"""
 ### 1. 下载原项目
 
-请从原作者仓库获取完整程序、许可证与教程。以下三种系统均可使用相同的 Git 地址；只需在各自的终端中复制对应命令。
+请从原作者仓库获取完整程序、许可证与教程。Windows 与 macOS/Linux 的命令分别如下。
 
 #### Windows（PowerShell）
 
@@ -848,14 +848,7 @@ git clone https://github.com/benfrey/FBG-SimPlus.git
 cd FBG-SimPlus
 ```
 
-#### macOS（Terminal）
-
-```bash
-git clone https://github.com/benfrey/FBG-SimPlus.git
-cd FBG-SimPlus
-```
-
-#### Linux（Bash）
+#### macOS / Linux（Terminal / Bash）
 
 ```bash
 git clone https://github.com/benfrey/FBG-SimPlus.git
@@ -883,20 +876,7 @@ python run.py
 
 若 PowerShell 禁止激活脚本，可仅对当前用户执行一次 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`，再重新执行激活命令。
 
-#### macOS（Terminal）
-
-确认已安装 Python 3.8 后，在 `FBG-SimPlus` 根目录复制执行：
-
-```bash
-python3.8 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install PyQt5 scipy matplotlib sympy six numpy
-cd python
-python run.py
-```
-
-#### Linux（Bash）
+#### macOS / Linux（Terminal / Bash）
 
 确认已安装 Python 3.8 后，在 `FBG-SimPlus` 根目录复制执行：
 

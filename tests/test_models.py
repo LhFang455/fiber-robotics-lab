@@ -57,8 +57,7 @@ def test_app_exposes_the_fbg_simplus_compatibility_module_and_attribution():
     assert "python -m pip install PyQt5 scipy matplotlib sympy six numpy" in source
     assert "python run.py" in source
     assert "Windows（PowerShell）" in source
-    assert "macOS（Terminal）" in source
-    assert "Linux（Bash）" in source
+    assert "macOS / Linux（Terminal / Bash）" in source
     assert "Skip Rows" in source
     assert "Path Distance Input Units" in source
     assert "Generate" in source
