@@ -75,8 +75,8 @@ with st.sidebar:
     st.divider()
     st.info("FBG 模型：Δλᵦ = λᵦ[(1−pₑ)ε + kₜΔT]。所有页面均显示真实量与反演量。")
 
-overview_tab, hand_tab, hand_3d_tab, calibration_tab, tactile_tab, foot_tab, shape_tab, health_tab, distributed_tab, polarization_tab, chain_tab = st.tabs(
-    ["① 系统总览", "② 二维手部抓取", "③ 三维抓取传感", "④ FBG 标定与诊断", "⑤ 多材质触觉识别", "⑥ 足底平衡与步态", "⑦ 连续体形状重建", "⑧ 机械臂健康监测", "⑨ 分布式光纤感知", "⑩ 偏振与干涉传感", "⑪ 解调器与实验任务"]
+overview_tab, hand_tab, hand_3d_tab, calibration_tab, tactile_tab, foot_tab, shape_tab, health_tab, distributed_tab, fbg_simplus_tab, polarization_tab, chain_tab = st.tabs(
+    ["① 系统总览", "② 二维手部抓取", "③ 三维抓取传感", "④ FBG 标定与诊断", "⑤ 多材质触觉识别", "⑥ 足底平衡与步态", "⑦ 连续体形状重建", "⑧ 机械臂健康监测", "⑨ 分布式光纤感知", "⑩ FBG-SimPlus 兼容", "⑪ 偏振与干涉传感", "⑫ 解调器与实验任务"]
 )
 
 with overview_tab:
@@ -90,8 +90,9 @@ with overview_tab:
         (6, "连续体形状重建", "三芯光纤曲率、方向、扭转和中心线"),
         (7, "机械臂健康监测", "局部异常应变、位置定位与报警"),
         (8, "分布式光纤感知", "Rayleigh、DAS、Brillouin、Raman 的空间测量"),
-        (9, "偏振与干涉传感", "Stokes 偏振态、Sagnac 陀螺与 EFPI 干涉谱"),
-        (10, "解调器与实验任务", "波长流、滤波温补、控制输出与实验报告"),
+        (9, "FBG-SimPlus 兼容", "检查 COMSOL FEM 导出数据，并进入原工具完成光谱仿真"),
+        (10, "偏振与干涉传感", "Stokes 偏振态、Sagnac 陀螺与 EFPI 干涉谱"),
+        (11, "解调器与实验任务", "波长流、滤波温补、控制输出与实验报告"),
     ])
     st.subheader("当前测量配置")
     config_a, config_b, config_c, config_d = st.columns(4)
@@ -816,6 +817,41 @@ with distributed_tab:
     distributed_b.metric("空间采样点", f"{len(np.asarray(distributed_frame['position_or_channel']))}")
     distributed_c.metric("数据质量", f"{float(distributed_frame['quality']) * 100:.0f}%")
     st.caption("不同机制的空间分辨率、测量距离、采样速度与温度—应变交叉敏感性不同；此处用于机制与数据形态比较，不代表具体商用解调设备指标。")
+
+with fbg_simplus_tab:
+    st.subheader("FBG-SimPlus 兼容：FEM 输入检查与交接")
+    st.caption("本页独立读取公开教程所示的 COMSOL 文本输入，用于数据检查和预览；不包含、复制、执行或修改 FBG-SimPlus 源代码，也不在本网站生成其反射谱。")
+    st.markdown(
+        "**出处与许可：** [FBG-SimPlus V1.0（Ben Frey 等）](https://github.com/benfrey/FBG-SimPlus) "
+        "采用 [GNU GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)。本网站仅做独立的数据格式兼容；"
+        "请从原仓库获取并独立运行该软件。"
+    )
+    st.markdown(
+        "**请引用：** Frey, B., Snyder, P., Ziock, K., & Passian, A. (2021). "
+        "*Semicomputational calculation of Bragg shift in stratified materials*. "
+        "Physical Review E, 104(5), 055307."
+    )
+    st.markdown(
+        "**使用步骤：** 1. 在 COMSOL 沿光纤路径导出位置、`elogxx`、`elogyy`、`elogzz`、`sx`、`sy`、`sz`、`T` 八列文本；"
+        "2. 在本页上传并检查数据；3. 将同一原始文本在本机独立导入 FBG-SimPlus，按其文档设置 FBG 阵列并生成光谱。"
+    )
+    template = (
+        "% COMSOL export compatible with the FBG-SimPlus public tutorial\n"
+        "% position_m elogxx elogyy elogzz sx_pa sy_pa sz_pa temperature_k\n"
+        "0.0000 0.002000 0.000100 -0.000200 100.0 20.0 -10.0 293.15\n"
+        "0.0010 0.001000 0.000200 -0.000100 80.0 15.0 -8.0 293.15\n"
+    )
+    st.download_button("下载八列 COMSOL 导出模板", template.encode("utf-8"), "fbg_simplus_comsol_export_template.txt", "text/plain")
+    uploaded_export = st.file_uploader("上传 COMSOL 导出文本（.txt）", type=["txt"], key="fbg_simplus_comsol_export")
+    if uploaded_export is not None:
+        try:
+            parsed_export = models.parse_fbg_simplus_comsol_export(uploaded_export.getvalue().decode("utf-8-sig"))
+        except (UnicodeDecodeError, ValueError) as error:
+            st.error(f"无法作为 FBG-SimPlus 兼容输入读取：{error}")
+        else:
+            st.success(f"已通过格式检查：{parsed_export['sample_count']} 个 FEM 采样点。请在 FBG-SimPlus 中独立完成光谱仿真。")
+            st.plotly_chart(visuals.fbg_simplus_input_figure(parsed_export), width="stretch")
+            st.info("检查范围仅限文本结构、数值有效性和位置递增性；应变/应力分量的物理含义、单位和 FBG 参数仍需按你的 COMSOL 模型与 FBG-SimPlus 文档确认。")
 
 with polarization_tab:
     st.subheader("偏振与干涉传感：偏振态、旋转与微腔光程差")

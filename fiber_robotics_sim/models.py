@@ -5,6 +5,41 @@ from __future__ import annotations
 import numpy as np
 
 
+def parse_fbg_simplus_comsol_export(text: str) -> dict[str, np.ndarray | int]:
+    """Parse the public FBG-SimPlus tutorial-style COMSOL text export.
+
+    This is an independent input-format reader.  It does not import, execute,
+    reproduce, or modify FBG-SimPlus, and it deliberately stops before any
+    reflection-spectrum calculation.
+    """
+    rows: list[list[float]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("%"):
+            continue
+        fields = stripped.split()
+        if len(fields) != 8:
+            raise ValueError("FBG-SimPlus 兼容输入的每个数据行必须包含八列")
+        try:
+            rows.append([float(field) for field in fields])
+        except ValueError as error:
+            raise ValueError("FBG-SimPlus 兼容输入包含无法读取的数值") from error
+    if not rows:
+        raise ValueError("FBG-SimPlus 兼容输入未包含数据行")
+    values = np.asarray(rows, dtype=float)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("FBG-SimPlus 兼容输入不能包含 NaN 或无穷值")
+    if np.any(np.diff(values[:, 0]) <= 0.0):
+        raise ValueError("FBG-SimPlus 兼容输入的位置列必须严格递增")
+    return {
+        "position_m": values[:, 0],
+        "longitudinal_strain": values[:, 1],
+        "transverse_stress_pa": values[:, 5:7],
+        "temperature_k": values[:, 7],
+        "sample_count": int(values.shape[0]),
+    }
+
+
 def auto_grasp_phase(elapsed_seconds: float) -> str:
     """Return the current phase of the non-blocking teaching grasp demonstration."""
     if elapsed_seconds < 1.0:

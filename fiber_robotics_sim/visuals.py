@@ -7,9 +7,33 @@ from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 COLORS = {"truth": "#17a2b8", "estimate": "#ff7f0e", "sensor": "#6f42c1"}
+
+
+def fbg_simplus_input_figure(result: dict) -> go.Figure:
+    """Preview FEM fields in the public FBG-SimPlus tutorial input order."""
+    position_mm = np.asarray(result["position_m"], dtype=float) * 1000.0
+    transverse_stress = np.asarray(result["transverse_stress_pa"], dtype=float)
+    stress_magnitude_mpa = np.linalg.norm(transverse_stress, axis=1) / 1e6
+    figure = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=.08,
+        subplot_titles=("纵向应变", "横向应力合量", "温度"),
+    )
+    figure.add_scatter(x=position_mm, y=result["longitudinal_strain"], mode="lines", name="纵向应变 εxx", line={"color": COLORS["truth"], "width": 3}, row=1, col=1)
+    figure.add_scatter(x=position_mm, y=stress_magnitude_mpa, mode="lines", name="横向应力 σy / σz", line={"color": COLORS["sensor"], "width": 3}, row=2, col=1)
+    figure.add_scatter(x=position_mm, y=result["temperature_k"], mode="lines", name="温度", line={"color": COLORS["estimate"], "width": 3}, row=3, col=1)
+    figure.update_layout(title="FBG-SimPlus 兼容输入预览（FEM 导出数据）", template="plotly_white", height=620, legend={"orientation": "h", "y": 1.08})
+    figure.update_xaxes(title_text="位置 (mm)", row=3, col=1)
+    figure.update_yaxes(title_text="应变", row=1, col=1)
+    figure.update_yaxes(title_text="MPa", row=2, col=1)
+    figure.update_yaxes(title_text="K", row=3, col=1)
+    return figure
 
 
 def _base_layout(title: str, xaxis: str, yaxis: str) -> dict:

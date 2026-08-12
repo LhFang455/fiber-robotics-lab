@@ -9,6 +9,51 @@ import fiber_robotics_sim.models as models
 import fiber_robotics_sim.visuals as visuals
 
 
+FBG_SIMPLUS_TUTORIAL_EXPORT = """% Model: COMSOL tutorial\n% x solid.elogxx solid.elogyy solid.elogzz solid.sx solid.sy solid.sz T\n0.0000 0.0020 0.0001 -0.0002 100.0 20.0 -10.0 293.15\n0.0010 0.0010 0.0002 -0.0001 80.0 15.0 -8.0 294.15\n"""
+
+
+def test_fbg_simplus_parser_reads_the_public_tutorial_column_order():
+    result = models.parse_fbg_simplus_comsol_export(FBG_SIMPLUS_TUTORIAL_EXPORT)
+
+    assert np.array_equal(result["position_m"], np.array([0.0, .001]))
+    assert np.array_equal(result["longitudinal_strain"], np.array([.002, .001]))
+    assert np.array_equal(result["transverse_stress_pa"], np.array([[20.0, -10.0], [15.0, -8.0]]))
+    assert np.array_equal(result["temperature_k"], np.array([293.15, 294.15]))
+    assert result["sample_count"] == 2
+
+
+def test_fbg_simplus_parser_rejects_invalid_columns_and_nonmonotonic_positions():
+    with pytest.raises(ValueError, match="八列"):
+        models.parse_fbg_simplus_comsol_export("0 1 2")
+    with pytest.raises(ValueError, match="严格递增"):
+        models.parse_fbg_simplus_comsol_export(
+            "0 0 0 0 0 0 0 293.15\n0 0 0 0 0 0 0 293.15"
+        )
+
+
+def test_fbg_simplus_input_figure_exposes_strain_stress_and_temperature():
+    parsed_export = {
+        "position_m": np.array([0.0, .001]),
+        "longitudinal_strain": np.array([.002, .001]),
+        "transverse_stress_pa": np.array([[20.0, -10.0], [15.0, -8.0]]),
+        "temperature_k": np.array([293.15, 294.15]),
+    }
+
+    figure = visuals.fbg_simplus_input_figure(parsed_export)
+
+    assert [trace.name for trace in figure.data] == ["纵向应变 εxx", "横向应力 σy / σz", "温度"]
+    assert np.array_equal(figure.data[0].x, np.array([0.0, 1.0]))
+
+
+def test_app_exposes_the_fbg_simplus_compatibility_module_and_attribution():
+    source = Path(__file__).resolve().parents[1].joinpath("app.py").read_text(encoding="utf-8")
+
+    assert "FBG-SimPlus 兼容" in source
+    assert "benfrey/FBG-SimPlus" in source
+    assert "GPL-3.0" in source
+    assert "Frey, B., Snyder, P., Ziock, K., & Passian, A. (2021)" in source
+
+
 def test_fbg_shift_combines_strain_and_temperature():
     assert hasattr(models, "fbg_wavelength_shift_nm")
     shift = models.fbg_wavelength_shift_nm(np.array([1e-3]), 10.0)
@@ -656,7 +701,7 @@ def test_app_exposes_the_complete_sensing_chain_pages_and_controls():
     labels = {slider.label for slider in app.slider}
 
     assert '"⑤ 多材质触觉识别"' in source
-    assert '"⑪ 解调器与实验任务"' in source
+    assert '"⑫ 解调器与实验任务"' in source
     assert {"故障通道", "握持力 (N)", "接触面积 (%)", "链路真实弯曲角 (°)"} <= labels
 
 
