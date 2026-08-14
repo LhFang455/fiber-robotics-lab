@@ -235,7 +235,7 @@ def simulate_planar_grasp_fbg(
     contact_fingers: list[int],
     temperature_change_c: float,
 ) -> dict[str, np.ndarray]:
-    """Generate one contact-sensitive FBG channel per planar finger."""
+    """Generate five finger channels plus one palm contact-sensitive FBG channel."""
     curls = np.asarray(finger_curls_deg, dtype=float)
     if curls.shape != (5,):
         raise ValueError("finger_curls_deg 必须包含五根手指")
@@ -243,9 +243,14 @@ def simulate_planar_grasp_fbg(
     contact[np.asarray(contact_fingers, dtype=int)] = 1.0
     bend_strain = curls * 4.0e-5
     contact_strain = contact * 2.1e-4
+    palm_contact = float(contact[0] > 0.0 and np.count_nonzero(contact[1:]) >= 2)
+    palm_contact_strain = palm_contact * 1.4e-4
     return {
-        "wavelength_shifts_nm": fbg_wavelength_shift_nm(bend_strain + contact_strain, temperature_change_c),
+        "wavelength_shifts_nm": fbg_wavelength_shift_nm(
+            np.r_[bend_strain + contact_strain, palm_contact_strain], temperature_change_c
+        ),
         "contact_strain": contact_strain,
+        "palm_contact_strain": np.array([palm_contact_strain]),
     }
 
 
@@ -257,13 +262,18 @@ def classify_planar_grasp_from_fbg(
     """Recover tactile contacts from FBG readings and decide a planar grasp."""
     curls = np.asarray(finger_curls_deg, dtype=float)
     shifts = np.asarray(sensing["wavelength_shifts_nm"], dtype=float)
-    if curls.shape != (5,) or shifts.shape != (5,):
-        raise ValueError("二维 FBG 判定需要五根手指的屈曲和波长读数")
+    if curls.shape != (5,) or shifts.shape != (6,):
+        raise ValueError("二维 FBG 判定需要五根手指和一枚掌心 FBG 的波长读数")
     strain = _strain_from_shift(shifts, temperature_change_c)
-    contact_strain = np.maximum(0.0, strain - curls * 4.0e-5)
+    contact_strain = np.maximum(0.0, strain[:5] - curls * 4.0e-5)
     contact_fingers = np.flatnonzero(contact_strain >= 1.0e-4).astype(int).tolist()
     is_grasped = bool(0 in contact_fingers and len([index for index in contact_fingers if index != 0]) >= 2)
-    return {"is_grasped": is_grasped, "contact_fingers": contact_fingers, "contact_strain": contact_strain}
+    return {
+        "is_grasped": is_grasped,
+        "contact_fingers": contact_fingers,
+        "contact_strain": contact_strain,
+        "palm_contact": bool(strain[5] >= 7.0e-5),
+    }
 
 
 def _strain_from_shift(shifts_nm: np.ndarray, temperature_change_c: float) -> np.ndarray:
@@ -408,6 +418,286 @@ def estimate_foot_load_distribution(
     return {
         "zone_loads_n": loads,
         "cop_region": float(np.dot(np.arange(6), loads) / max(loads.sum(), 1e-9)),
+    }
+
+
+_REPLACEABLE_SOLE_CASES = {
+    "正常装配": {"seating_ratio": 1.0, "lateral_offset_mm": 0.0, "insertion_deficit_mm": 0.0},
+    "压入不足": {"seating_ratio": 0.60, "lateral_offset_mm": 0.0, "insertion_deficit_mm": 1.2},
+    "单侧错位": {"seating_ratio": 1.0, "lateral_offset_mm": 4.0, "insertion_deficit_mm": 0.0},
+}
+
+
+def _classify_assembly(mean_baseline_residual_ue: float, left_right_difference_ue: float) -> str:
+    if abs(mean_baseline_residual_ue) > 45.0:
+        return "压入不足：预测不通过"
+    if left_right_difference_ue > 70.0:
+        return "单侧错位：预测不通过"
+    return "装配预测通过"
+
+
+def _assembly_readout(
+    seating_ratio: float,
+    lateral_offset_mm: float,
+    temperature_change_c: float,
+    working_noise_ue: np.ndarray | None = None,
+) -> dict[str, np.ndarray | float | str]:
+    """Return the common-temperature compensated readout for one assumed assembly state."""
+    nominal_preload_ue = 240.0
+    working_strain_ue = nominal_preload_ue * seating_ratio * np.array(
+        [1.0 - lateral_offset_mm / 12.0, 1.0 + lateral_offset_mm / 12.0]
+    )
+    if working_noise_ue is not None:
+        working_strain_ue = working_strain_ue + np.asarray(working_noise_ue, dtype=float)
+    working_shifts_nm = fbg_wavelength_shift_nm(working_strain_ue * 1e-6, temperature_change_c)
+    reference_shift_nm = float(fbg_wavelength_shift_nm(np.array([0.0]), temperature_change_c)[0])
+    compensated_working_ue = _strain_from_shift(working_shifts_nm, temperature_change_c) * 1e6
+    compensated_reference_ue = float(
+        _strain_from_shift(np.array([reference_shift_nm]), temperature_change_c)[0] * 1e6
+    )
+    baseline_residual_ue = compensated_working_ue - compensated_reference_ue - nominal_preload_ue
+    mean_baseline_residual_ue = float(np.mean(baseline_residual_ue))
+    left_right_difference_ue = float(abs(np.diff(compensated_working_ue)[0]))
+    return {
+        "working_wavelength_shifts_nm": working_shifts_nm,
+        "reference_wavelength_shift_nm": reference_shift_nm,
+        "temperature_compensated_working_strain_ue": compensated_working_ue,
+        "temperature_compensated_reference_strain_ue": compensated_reference_ue,
+        "baseline_residual_ue": baseline_residual_ue,
+        "mean_baseline_residual_ue": mean_baseline_residual_ue,
+        "left_right_difference_ue": left_right_difference_ue,
+        "assembly_prediction": _classify_assembly(
+            mean_baseline_residual_ue, left_right_difference_ue
+        ),
+    }
+
+
+def simulate_replaceable_sole_assembly(
+    assembly_case: str, temperature_change_c: float
+) -> dict[str, np.ndarray | float | str | dict[str, float]]:
+    """Predict an empty-load assembly check for a replaceable sole concept.
+
+    This is a two-dimensional, parameterised transmission-field model.  It
+    compares two fixed-core working FBGs with one mechanically isolated
+    reference FBG after common temperature compensation.  Its parameter values
+    and screening limits are illustrative simulation inputs, not product
+    specifications, material data, sealing ratings, or physical validation.
+    """
+    if assembly_case not in _REPLACEABLE_SOLE_CASES:
+        raise ValueError("装配工况必须为：正常装配、压入不足或单侧错位")
+    case = _REPLACEABLE_SOLE_CASES[assembly_case]
+    nominal_preload_ue = 240.0
+    lateral_offset_mm = float(case["lateral_offset_mm"])
+    seating_ratio = float(case["seating_ratio"])
+    readout = _assembly_readout(seating_ratio, lateral_offset_mm, temperature_change_c)
+
+    transfer_field = solve_sole_transfer_sensitivity_field(seating_ratio, lateral_offset_mm)
+    return {
+        "assembly_case": assembly_case,
+        **readout,
+        "transfer_x_mm": transfer_field["x_mm"],
+        "transfer_y_mm": transfer_field["y_mm"],
+        "transfer_index": transfer_field["relative_transfer"],
+        "transfer_centroid_x_mm": transfer_field["transfer_centroid_x_mm"],
+        "case_parameters": {
+            "nominal_preload_ue": nominal_preload_ue,
+            "seating_ratio": seating_ratio,
+            "lateral_offset_mm": lateral_offset_mm,
+            "insertion_deficit_mm": float(case["insertion_deficit_mm"]),
+            "mean_residual_limit_ue": 45.0,
+            "left_right_difference_limit_ue": 70.0,
+        },
+    }
+
+
+def solve_sole_transfer_sensitivity_field(
+    seating_ratio: float, lateral_offset_mm: float
+) -> dict[str, np.ndarray | float | str]:
+    """Solve a relative 2D transmission sensitivity field on a fixed grid.
+
+    A screened finite-difference field is used to make the assumed boundary,
+    source position and lateral response explicit without introducing an FEM
+    package or claiming calibrated material mechanics.  It must be replaced or
+    checked with a material-calibrated finite-element model before design use.
+    """
+    x_mm = np.linspace(-30.0, 30.0, 121)
+    y_mm = np.linspace(-45.0, 45.0, 181)
+    x_grid, y_grid = np.meshgrid(x_mm, y_mm)
+    source = max(0.0, seating_ratio) * np.exp(
+        -0.5 * ((x_grid - lateral_offset_mm) / 9.0) ** 2
+        -0.5 * (y_grid / 18.0) ** 2
+    )
+    spacing_mm = float(x_mm[1] - x_mm[0])
+    screening_per_mm2 = 0.018
+    transfer = np.zeros_like(source)
+    denominator = 4.0 + screening_per_mm2 * spacing_mm**2
+    for _ in range(240):
+        next_transfer = transfer.copy()
+        next_transfer[1:-1, 1:-1] = (
+            transfer[:-2, 1:-1]
+            + transfer[2:, 1:-1]
+            + transfer[1:-1, :-2]
+            + transfer[1:-1, 2:]
+            + spacing_mm**2 * source[1:-1, 1:-1]
+        ) / denominator
+        transfer = next_transfer
+    relative_transfer = transfer / max(float(transfer.max()), 1e-12)
+    total_transfer = float(relative_transfer.sum())
+    transfer_centroid_x_mm = float(
+        np.sum(relative_transfer * x_grid) / max(total_transfer, 1e-12)
+    )
+    return {
+        "x_mm": x_mm,
+        "y_mm": y_mm,
+        "relative_transfer": relative_transfer,
+        "transfer_centroid_x_mm": transfer_centroid_x_mm,
+        "validation_boundary": "需要材料参数标定与有限元复核",
+    }
+
+
+def simulate_replaceable_sole_tolerance_scan(
+    samples_per_case: int,
+    temperature_change_c: float,
+    measurement_noise_nm: float,
+    seed: int,
+) -> dict[str, np.ndarray | tuple[str, str, str] | int]:
+    """Run a reproducible tolerance-screening Monte Carlo using assumed spreads.
+
+    The variation ranges are sensitivity-study inputs, not measured production
+    tolerances.  The output shows only how the current decision rule behaves
+    under those inputs.
+    """
+    if samples_per_case < 1 or measurement_noise_nm < 0.0:
+        raise ValueError("每工况样本数必须为正，测量噪声不能为负")
+    labels = ("正常装配", "压入不足", "单侧错位")
+    expected = {
+        "正常装配": (1.00, 0.03, 0.00, 0.35),
+        "压入不足": (0.60, 0.05, 0.00, 0.35),
+        "单侧错位": (1.00, 0.03, 4.00, 0.45),
+    }
+    prediction_index = {"装配预测通过": 0, "压入不足：预测不通过": 1, "单侧错位：预测不通过": 2}
+    strain_noise_ue = measurement_noise_nm / (WAVELENGTH_NM * (1.0 - PHOTOELASTIC_COEFFICIENT)) * 1e6
+    generator = np.random.default_rng(seed)
+    confusion_matrix = np.zeros((3, 3), dtype=int)
+    for true_index, case_name in enumerate(labels):
+        seating_mean, seating_std, offset_mean, offset_std = expected[case_name]
+        for _ in range(samples_per_case):
+            seating_ratio = max(0.10, generator.normal(seating_mean, seating_std))
+            lateral_offset_mm = generator.normal(offset_mean, offset_std)
+            readout = _assembly_readout(
+                seating_ratio,
+                lateral_offset_mm,
+                temperature_change_c,
+                generator.normal(0.0, strain_noise_ue, 2),
+            )
+            confusion_matrix[true_index, prediction_index[str(readout["assembly_prediction"])]] += 1
+    return {
+        "labels": labels,
+        "confusion_matrix": confusion_matrix,
+        "samples_per_case": int(samples_per_case),
+    }
+
+
+def simulate_reference_temperature_mismatch(
+    working_temperature_change_c: float, reference_temperature_change_c: float
+) -> dict[str, float | str]:
+    """Quantify the false baseline offset when reference and working FBGs differ in temperature."""
+    nominal_preload_ue = 240.0
+    working_shift_nm = fbg_wavelength_shift_nm(
+        np.full(2, nominal_preload_ue * 1e-6), working_temperature_change_c
+    )
+    reference_shift_nm = float(
+        fbg_wavelength_shift_nm(np.array([0.0]), reference_temperature_change_c)[0]
+    )
+    working_ue = _strain_from_shift(working_shift_nm, working_temperature_change_c) * 1e6
+    reference_ue = float(
+        _strain_from_shift(np.array([reference_shift_nm]), working_temperature_change_c)[0] * 1e6
+    )
+    baseline_bias_ue = float(np.mean(working_ue) - reference_ue - nominal_preload_ue)
+    return {
+        "working_temperature_change_c": float(working_temperature_change_c),
+        "reference_temperature_change_c": float(reference_temperature_change_c),
+        "baseline_bias_ue": baseline_bias_ue,
+        "validation_boundary": "需要温度梯度试验",
+    }
+
+
+def simulate_seal_compression_screen(
+    nominal_compression_ratio: float, lateral_offset_mm: float
+) -> dict[str, np.ndarray | float | str]:
+    """Screen relative circumferential compression variation; it does not predict sealing performance."""
+    if not 0.0 <= nominal_compression_ratio <= 1.0:
+        raise ValueError("名义压缩率必须在 0 到 1 之间")
+    angle_deg = np.linspace(0.0, 360.0, 181)
+    compression_ratio = nominal_compression_ratio + lateral_offset_mm / 20.0 * np.cos(np.deg2rad(angle_deg))
+    minimum_index = int(np.argmin(compression_ratio))
+    return {
+        "angle_deg": angle_deg,
+        "compression_ratio": compression_ratio,
+        "minimum_compression_ratio": float(compression_ratio[minimum_index]),
+        "minimum_compression_angle_deg": float(angle_deg[minimum_index]),
+        "validation_boundary": "需要密封实物试验",
+    }
+
+
+def simulate_preload_retention_sensitivity(
+    maximum_cycles: int, assumed_retention_per_1000_cycles: float
+) -> dict[str, np.ndarray | str]:
+    """Generate an assumed preload-retention curve for test planning, not fatigue prediction."""
+    if maximum_cycles < 0 or not 0.0 < assumed_retention_per_1000_cycles <= 1.0:
+        raise ValueError("循环次数不能为负，千次保持率必须在 0 与 1 之间")
+    cycle_count = np.linspace(0.0, float(maximum_cycles), 101)
+    preload_ue = 240.0 * assumed_retention_per_1000_cycles ** (cycle_count / 1000.0)
+    return {
+        "cycle_count": cycle_count,
+        "preload_ue": preload_ue,
+        "validation_boundary": "需要循环装拆与载荷试验",
+    }
+
+
+def simulate_assembly_operational_load_interference(
+    vertical_load_n: float, temperature_change_c: float
+) -> dict[str, np.ndarray | str]:
+    """Show why assembly self-check must be performed empty-load rather than during gait."""
+    if vertical_load_n < 0.0:
+        raise ValueError("垂直载荷不能为负")
+    operational_signal_ue = vertical_load_n * 4.0 * np.array([0.9, 1.1])
+    wavelength_shifts_nm = fbg_wavelength_shift_nm(
+        operational_signal_ue * 1e-6, temperature_change_c
+    )
+    return {
+        "operational_signal_ue": operational_signal_ue,
+        "wavelength_shifts_nm": wavelength_shifts_nm,
+        "assembly_check_condition": "仅空载",
+        "validation_boundary": "需要步态载荷试验",
+    }
+
+
+def assess_replaceable_sole_sensing_readiness(
+    assembly_case: str, current_vertical_load_n: float
+) -> dict[str, str | bool]:
+    """Gate gait-data interpretation with the empty-load assembly-screening condition.
+
+    The return value is intentionally limited to the current teaching-model
+    workflow: it neither certifies the assembly nor makes a safety claim.
+    """
+    if current_vertical_load_n < 0.0:
+        raise ValueError("垂直载荷不能为负")
+    assembly = simulate_replaceable_sole_assembly(assembly_case, 0.0)
+    is_empty_load = bool(np.isclose(current_vertical_load_n, 0.0))
+    prediction = str(assembly["assembly_prediction"])
+    can_enter_flow = bool(is_empty_load and prediction == "装配预测通过")
+    if not is_empty_load:
+        status = "需空载复装校验"
+    elif can_enter_flow:
+        status = "可进入足底感知流程（仿真候选）"
+    else:
+        status = "需复装复核"
+    return {
+        "can_enter_foot_sensing_flow": can_enter_flow,
+        "status": status,
+        "assembly_prediction": prediction,
+        "validation_boundary": "装配候选需由实物空载复装、温度梯度和重复装拆试验确认",
     }
 
 

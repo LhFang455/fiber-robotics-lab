@@ -143,6 +143,144 @@ def test_foot_fbg_round_trip_recovers_six_zone_loads_and_cop_without_noise():
     assert estimate["cop_region"] == pytest.approx(np.dot(np.arange(6), loads) / loads.sum())
 
 
+def test_replaceable_sole_normal_assembly_matches_the_temperature_compensated_baseline():
+    result = models.simulate_replaceable_sole_assembly("正常装配", 18.0)
+
+    assert result["assembly_prediction"] == "装配预测通过"
+    assert np.allclose(result["baseline_residual_ue"], 0.0)
+    assert result["left_right_difference_ue"] == pytest.approx(0.0)
+
+
+def test_replaceable_sole_insufficient_insertion_is_rejected_by_baseline_residual():
+    result = models.simulate_replaceable_sole_assembly("压入不足", 18.0)
+
+    assert result["assembly_prediction"] == "压入不足：预测不通过"
+    assert result["mean_baseline_residual_ue"] < -45.0
+
+
+def test_replaceable_sole_single_side_misalignment_is_rejected_by_left_right_difference():
+    result = models.simulate_replaceable_sole_assembly("单侧错位", 18.0)
+
+    assert result["assembly_prediction"] == "单侧错位：预测不通过"
+    assert result["left_right_difference_ue"] > 70.0
+    assert result["transfer_centroid_x_mm"] > 0.0
+
+
+def test_replaceable_sole_transfer_figure_is_a_renderable_two_dimensional_result_template():
+    result = models.simulate_replaceable_sole_assembly("正常装配", 0.0)
+
+    figure = visuals.replaceable_sole_transfer_figure(result)
+
+    assert len(figure.data) == 1
+    assert figure.data[0].type == "heatmap"
+
+
+def test_replaceable_sole_explainer_figure_connects_structure_check_and_gait_use():
+    assembly = models.simulate_replaceable_sole_assembly("正常装配", 0.0)
+
+    figure = visuals.replaceable_sole_explainer_figure(
+        assembly, np.full(6, 30.0), "平地", 2.5, "支撑期"
+    )
+
+    assert len(figure.data) >= 2
+    assert any("空载自检" in annotation.text for annotation in figure.layout.annotations)
+    assert any("可更换" in annotation.text for annotation in figure.layout.annotations)
+
+
+def test_sole_component_explorer_visually_separates_structure_seal_and_signal_paths():
+    assembly = models.simulate_replaceable_sole_assembly("单侧错位", 0.0)
+
+    figure = visuals.sole_component_explorer_figure(assembly, "周向密封圈")
+
+    trace_names = {trace.name for trace in figure.data}
+    assert {"受力路径", "密封路径", "光纤信号路径"} <= trace_names
+    assert any("单侧错位" in annotation.text for annotation in figure.layout.annotations)
+    assert len(figure.layout.shapes) >= 8
+
+
+def test_replaceable_sole_tolerance_scan_is_reproducible_and_counts_every_case():
+    first = models.simulate_replaceable_sole_tolerance_scan(40, 12.0, 0.002, 13)
+    second = models.simulate_replaceable_sole_tolerance_scan(40, 12.0, 0.002, 13)
+
+    assert first["confusion_matrix"].shape == (3, 3)
+    assert np.array_equal(first["confusion_matrix"], second["confusion_matrix"])
+    assert np.array_equal(first["confusion_matrix"].sum(axis=1), np.full(3, 40))
+
+
+def test_reference_temperature_mismatch_creates_a_nonzero_baseline_bias():
+    matched = models.simulate_reference_temperature_mismatch(15.0, 15.0)
+    mismatched = models.simulate_reference_temperature_mismatch(15.0, 14.0)
+
+    assert matched["baseline_bias_ue"] == pytest.approx(0.0)
+    assert mismatched["baseline_bias_ue"] > 0.0
+
+
+def test_seal_compression_screen_exposes_the_lowest_compression_location_without_ip_claim():
+    centered = models.simulate_seal_compression_screen(0.20, 0.0)
+    offset = models.simulate_seal_compression_screen(0.20, 0.80)
+
+    assert centered["minimum_compression_ratio"] == pytest.approx(0.20)
+    assert offset["minimum_compression_ratio"] < centered["minimum_compression_ratio"]
+    assert offset["validation_boundary"] == "需要密封实物试验"
+
+
+def test_preload_retention_sensitivity_is_monotonic_for_an_assumed_cycle_loss_rate():
+    result = models.simulate_preload_retention_sensitivity(5000, 0.985)
+
+    assert result["cycle_count"].shape == result["preload_ue"].shape
+    assert result["preload_ue"][0] == pytest.approx(240.0)
+    assert result["preload_ue"][-1] < result["preload_ue"][0]
+    assert result["validation_boundary"] == "需要循环装拆与载荷试验"
+
+
+def test_operational_load_is_separated_from_the_empty_load_assembly_check():
+    result = models.simulate_assembly_operational_load_interference(180.0, 0.0)
+
+    assert result["operational_signal_ue"].mean() > 0.0
+    assert result["assembly_check_condition"] == "仅空载"
+    assert result["validation_boundary"] == "需要步态载荷试验"
+
+
+def test_foot_sensing_readiness_requires_an_empty_load_normal_assembly_candidate():
+    normal_empty = models.assess_replaceable_sole_sensing_readiness("正常装配", 0.0)
+    normal_loaded = models.assess_replaceable_sole_sensing_readiness("正常装配", 180.0)
+    offset_empty = models.assess_replaceable_sole_sensing_readiness("单侧错位", 0.0)
+
+    assert normal_empty["can_enter_foot_sensing_flow"] is True
+    assert normal_loaded["can_enter_foot_sensing_flow"] is False
+    assert offset_empty["can_enter_foot_sensing_flow"] is False
+
+
+def test_discrete_sole_transfer_sensitivity_field_moves_with_the_assumed_lateral_offset():
+    centered = models.solve_sole_transfer_sensitivity_field(1.0, 0.0)
+    offset = models.solve_sole_transfer_sensitivity_field(1.0, 4.0)
+
+    assert centered["relative_transfer"].ndim == 2
+    assert centered["transfer_centroid_x_mm"] == pytest.approx(0.0, abs=0.3)
+    assert offset["transfer_centroid_x_mm"] > 1.0
+    assert centered["validation_boundary"] == "需要材料参数标定与有限元复核"
+
+
+def test_tolerance_confusion_figure_is_renderable():
+    scan = models.simulate_replaceable_sole_tolerance_scan(20, 0.0, 0.0, 5)
+
+    figure = visuals.assembly_tolerance_confusion_figure(scan)
+
+    assert len(figure.data) == 1
+    assert figure.data[0].type == "heatmap"
+
+
+def test_assembly_screening_line_figures_are_renderable():
+    seal = models.simulate_seal_compression_screen(0.20, 0.80)
+    retention = models.simulate_preload_retention_sensitivity(5000, 0.985)
+
+    seal_figure = visuals.seal_compression_screen_figure(seal)
+    retention_figure = visuals.preload_retention_sensitivity_figure(retention)
+
+    assert len(seal_figure.data) == 1
+    assert len(retention_figure.data) == 1
+
+
 def test_arm_health_monitoring_localises_a_damage_peak_after_temperature_compensation():
     result = models.simulate_arm_health_fbg(80.0, 315.0, 0.70, 16.0, 0.0, 8)
     diagnosis = models.diagnose_arm_health(result["wavelength_shifts_nm"], 16.0)
@@ -331,6 +469,22 @@ def test_planar_grasp_success_is_decided_from_temperature_compensated_fbg_contac
 
     assert models.classify_planar_grasp_from_fbg(sensed, (63.0, 84.0, 84.0, 84.0, 84.0), 9.0)["is_grasped"] is True
     assert models.classify_planar_grasp_from_fbg(displaced, (63.0, 84.0, 84.0, 84.0, 84.0), 9.0)["is_grasped"] is False
+
+
+def test_planar_grasp_exposes_a_sixth_palm_fbg_without_changing_the_finger_grasp_rule():
+    sensed = models.simulate_planar_grasp_fbg((63.0, 84.0, 84.0, 84.0, 84.0), [0, 1, 2], 0.0)
+    decision = models.classify_planar_grasp_from_fbg(sensed, (63.0, 84.0, 84.0, 84.0, 84.0), 0.0)
+
+    assert sensed["wavelength_shifts_nm"].shape == (6,)
+    assert decision["is_grasped"] is True
+    assert decision["palm_contact"] is True
+
+
+def test_planar_transition_draws_a_distinct_palm_fbg_route():
+    pose = visuals.dexterous_hand_pose("抓取")
+    figure = visuals.planar_hand_transition_figure(pose, pose, pose["target"], pose["target"], True, True)
+
+    assert "掌心 FBG" in {trace.name for trace in figure.data}
 
 
 def test_3d_grasp_sensing_is_independent_and_responds_to_depth_offset():
@@ -660,7 +814,7 @@ def test_planar_palm_uses_a_balanced_hand_proportion():
     outline = np.asarray(pose["palm_outline"])
 
     assert np.ptp(outline @ forward) == pytest.approx(1.18)
-    assert np.ptp(outline @ lateral) == pytest.approx(1.34)
+    assert np.ptp(outline @ lateral) == pytest.approx(.67)
 
 
 def test_anthropomorphic_hand_frames_the_whole_robot_group():
@@ -694,7 +848,7 @@ def test_planar_grasp_groups_controls_and_visuals_side_by_side():
     source = Path("app.py").read_text(encoding="utf-8")
 
     assert "planar_controls, planar_display = st.columns([1, 2])" in source
-    assert source.index("with planar_display:") < source.index('"二维抓取：五路 FBG 波长漂移"')
+    assert source.index("with planar_display:") < source.index('"二维抓取：五指与掌心六路 FBG 波长漂移"')
 
 
 def test_standalone_finger_calibration_and_contact_inversion_live_in_the_calibration_tab():
@@ -762,6 +916,13 @@ def test_planar_task_closure_resolves_to_a_clickable_next_phase():
     assert next_button.disabled is False
 
 
+def test_default_two_d_grab_preset_closes_on_the_initial_target_envelope():
+    app = AppTest.from_file("app.py").run()
+    next(button for button in app.button if button.key == "action_抓取").click().run()
+
+    assert any("FBG 已抓稳" in alert.value for alert in app.success)
+
+
 def test_planar_release_phase_reenables_manual_commands_before_final_acknowledgement():
     app = AppTest.from_file("app.py").run()
     get = lambda key: next(button for button in app.button if button.key == key)
@@ -824,6 +985,20 @@ def test_app_exposes_a_separate_3d_grasp_sensing_page():
     assert any(subheader.value == "三维抓取传感：独立接触与 FBG 读数" for subheader in app.subheader)
 
 
+def test_app_exposes_replaceable_sole_assembly_prediction_page():
+    app = AppTest.from_file("app.py").run(timeout=10)
+    headings = {subheader.value for subheader in app.subheader}
+    assert "可更换式足底组件：二维装配状态预测" in headings
+    assert "装配公差与阈值敏感性" in headings
+    assert "下载装配验证参数摘要" in {button.label for button in app.get("download_button")}
+
+
+def test_foot_page_keeps_reassembly_visuals_in_an_auxiliary_expander():
+    app = AppTest.from_file("app.py").run(timeout=10)
+
+    assert "复装与结构说明（辅助）" in {item.label for item in app.expander}
+
+
 def test_app_exposes_a_3d_initial_pose_reset_button():
     app = AppTest.from_file("app.py").run()
     assert any(button.label == "恢复三维初始姿态" for button in app.button)
@@ -845,3 +1020,13 @@ def test_arm_3d_and_foot_figures_are_renderable():
     foot = visuals.foot_schematic_figure(np.full(6, 30.0), "平地")
     assert len(foot.data) == 1
     assert len(foot.layout.shapes) == 6
+
+
+def test_foot_fbg_dashboard_shows_all_six_live_wavelength_channels_and_loads():
+    figure = visuals.foot_fbg_dashboard_figure(
+        np.array([0.001, 0.002, 0.003, 0.004, 0.005, 0.006]),
+        np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0]),
+    )
+
+    assert {trace.name for trace in figure.data} == {"FBG 波长漂移", "区域载荷"}
+    assert len(figure.data[0].x) == 6

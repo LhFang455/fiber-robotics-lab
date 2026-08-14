@@ -58,6 +58,292 @@ def sensor_bar_figure(positions: np.ndarray, shifts: np.ndarray, title: str) -> 
     return figure
 
 
+def replaceable_sole_transfer_figure(result: dict) -> go.Figure:
+    """Render the two-dimensional transmission field for an assembly prediction."""
+    figure = go.Figure(
+        go.Heatmap(
+            x=result["transfer_x_mm"],
+            y=result["transfer_y_mm"],
+            z=result["transfer_index"],
+            colorscale="Viridis",
+            colorbar={"title": "相对传力"},
+            hovertemplate="横向 %{x:.1f} mm<br>纵向 %{y:.1f} mm<br>相对传力 %{z:.3f}<extra></extra>",
+        )
+    )
+    figure.add_shape(type="rect", x0=-18, x1=18, y0=-34, y1=34, line={"color": "#ffffff", "width": 2})
+    figure.add_shape(type="rect", x0=-9, x1=9, y0=-22, y1=22, line={"color": COLORS["sensor"], "width": 2, "dash": "dot"})
+    figure.add_annotation(x=0, y=39, text="可更换外底 / 分区传力模块边界", showarrow=False)
+    figure.add_annotation(x=0, y=-39, text="固定感知芯与布线通道（示意）", showarrow=False, font={"color": COLORS["sensor"]})
+    figure.update_layout(**_base_layout("二维传力场结果模板（空载装配预测）", "横向位置 (mm)", "纵向位置 (mm)"))
+    figure.update_yaxes(scaleanchor="x", scaleratio=1)
+    return figure
+
+
+def replaceable_sole_explainer_figure(
+    assembly: dict,
+    zones: np.ndarray,
+    terrain: str,
+    cop_region: float,
+    support: str,
+) -> go.Figure:
+    """Connect replaceable-sole structure, empty-load screening and sole use in one view.
+
+    This is an explanatory interface diagram.  Its values come from the same
+    simplified teaching models as the detailed charts and are not a product
+    qualification result.
+    """
+    zones = np.asarray(zones, dtype=float)
+    if zones.shape != (6,):
+        raise ValueError("足底总览需要六个分区载荷")
+    prediction = str(assembly["assembly_prediction"])
+    passed = prediction == "装配预测通过"
+    status_color = "#1f9d8a" if passed else "#d66a34"
+    residual = float(assembly["mean_baseline_residual_ue"])
+    difference = float(assembly["left_right_difference_ue"])
+    maximum = max(float(zones.max()), 1.0)
+    figure = go.Figure()
+
+    # Three large reading panels: hardware, unloaded check, and operation.
+    for x0, x1, title, color in (
+        (1, 31, "① 换装结构", "#d9eef3"),
+        (35, 65, "② 空载自检", "#efe6fa"),
+        (69, 99, "③ 足底使用", "#fff0dd"),
+    ):
+        figure.add_shape(
+            type="rect", x0=x0, x1=x1, y0=21, y1=94,
+            fillcolor=color, line={"color": "#7d98a7", "width": 1}, layer="below",
+        )
+        figure.add_annotation(x=(x0 + x1) / 2, y=90, text=f"<b>{title}</b>", showarrow=False,
+                              font={"size": 17, "color": "#173445"})
+
+    # Exploded, sectional representation: the sensing core remains in place.
+    layers = (
+        (77, 84, "可更换耐磨外底 / 分区传力模块", "#e9a85b"),
+        (65, 72, "柔性隔离膜：受力与密封分离", "#f3d7b4"),
+        (52, 60, "固定光纤感知芯：FBG 与布线通道", "#5fb6c5"),
+        (39, 47, "基板 / 轴向限位台阶", "#7895a3"),
+    )
+    for y0, y1, label, color in layers:
+        figure.add_shape(type="rect", x0=5, x1=27, y0=y0, y1=y1,
+                         fillcolor=color, line={"color": "#315064", "width": 1.4})
+        figure.add_annotation(x=16, y=(y0 + y1) / 2, text=label, showarrow=False,
+                              font={"size": 11, "color": "#102a38"})
+    for x in (8, 24):
+        figure.add_shape(type="line", x0=x, x1=x, y0=41, y1=81,
+                         line={"color": "#345a6a", "width": 3})
+    figure.add_annotation(x=29, y=61, text="定位柱 + 锁止件\n控制复装位置", showarrow=True,
+                          ax=50, ay=0, arrowhead=2, font={"size": 11, "color": "#173445"})
+    figure.add_annotation(x=16, y=85, text="复装方向", showarrow=True, ax=0, ay=-30,
+                          arrowhead=3, arrowwidth=2, arrowcolor="#c75d2c", font={"size": 11})
+    figure.add_annotation(x=16, y=31, text="感知芯不随外底更换", showarrow=False,
+                          font={"size": 12, "color": "#176f7d"})
+
+    # Unloaded working/reference grating comparison and decision.
+    for x, label, color in ((40, "W1", COLORS["sensor"]), (48, "W2", COLORS["sensor"]), (56, "R", "#6c757d")):
+        figure.add_shape(type="circle", x0=x - 3.4, x1=x + 3.4, y0=69, y1=76,
+                         fillcolor=color, line={"color": "#ffffff", "width": 1})
+        figure.add_annotation(x=x, y=72.5, text=f"<b>{label}</b>", showarrow=False,
+                              font={"color": "white", "size": 13})
+    figure.add_annotation(x=48, y=62, text="温度补偿后比较空载基线", showarrow=True, ax=0, ay=-28,
+                          arrowhead=2, font={"size": 12, "color": "#173445"})
+    figure.add_shape(type="rect", x0=39, x1=57, y0=42, y1=53, fillcolor="#ffffff",
+                     line={"color": "#9474b6", "width": 1.5})
+    figure.add_annotation(x=48, y=47.5,
+                          text=f"平均残差 {residual:.1f} με<br>|W1−W2| {difference:.1f} με",
+                          showarrow=False, font={"size": 12, "color": "#35234a"})
+    figure.add_shape(type="rect", x0=39, x1=57, y0=28, y1=37, fillcolor=status_color,
+                     line={"color": status_color})
+    figure.add_annotation(x=48, y=32.5, text=f"<b>{prediction}</b>", showarrow=False,
+                          font={"size": 12, "color": "white"})
+
+    # Six coloured zones show the current operational load separately from the check.
+    zone_positions = ((74, 70), (82, 70), (90, 70), (74, 48), (82, 48), (90, 48))
+    for index, ((x, y), value) in enumerate(zip(zone_positions, zones, strict=True), start=1):
+        alpha = .22 + .70 * float(value) / maximum
+        figure.add_shape(type="rect", x0=x, x1=x + 6.2, y0=y, y1=y + 17,
+                         fillcolor=f"rgba(31,157,138,{alpha:.2f})",
+                         line={"color": "#315064", "width": 1.2})
+        figure.add_annotation(x=x + 3.1, y=y + 8.5, text=f"区 {index}<br>{value:.0f} N",
+                              showarrow=False, font={"size": 11, "color": "#102a38"})
+    figure.add_scatter(
+        x=[75, 78, 84, 90, 93, 90, 84, 78, 75],
+        y=[78, 75, 77, 74, 68, 55, 53, 55, 50],
+        mode="lines+markers", name="固定光纤走线",
+        line={"color": "#176f7d", "width": 3}, marker={"size": 5, "color": "#176f7d"},
+    )
+    cop_x = 77.1 + 3.1 * float(np.clip(cop_region, 0.0, 5.0))
+    figure.add_scatter(x=[cop_x], y=[45], mode="markers+text", name="压力中心 CoP",
+                       text=["CoP"], textposition="bottom center",
+                       marker={"size": 14, "color": "#d14646", "symbol": "x"})
+    figure.add_annotation(x=84, y=31, text=f"{terrain} · {support}<br>六区载荷 → CoP / 步态教学",
+                          showarrow=False, font={"size": 12, "color": "#173445"})
+
+    # Bottom flow makes the required order explicit to a first-time reader.
+    flow = ((4, 26, "模块复装", "#315064"), (29, 51, "空载自检\n（必须卸载）", "#6f42c1"),
+            (54, 76, "装配候选", status_color), (79, 97, "载荷 / 步态读取", "#17a2b8"))
+    for x0, x1, label, color in flow:
+        figure.add_shape(type="rect", x0=x0, x1=x1, y0=6, y1=16, fillcolor=color,
+                         line={"color": color}, layer="below")
+        figure.add_annotation(x=(x0 + x1) / 2, y=11, text=f"<b>{label}</b>", showarrow=False,
+                              font={"size": 11, "color": "white"})
+    for x in (27.5, 52.5, 77.5):
+        figure.add_annotation(x=x, y=11, text="", showarrow=True, ax=-18, ay=0,
+                              arrowhead=3, arrowcolor="#5b7280")
+    figure.add_annotation(x=50, y=98,
+                          text="教学总览：显示当前简化模型的结构关系、筛查逻辑与载荷示意；不等同于实物装配、密封或耐久结论。",
+                          showarrow=False, font={"size": 11, "color": "#526c79"})
+    figure.update_layout(
+        title="从复装到步态：可更换足底组件一图读懂",
+        template="plotly_white", height=610, showlegend=False,
+        xaxis={"visible": False, "range": [0, 100], "fixedrange": True},
+        yaxis={"visible": False, "range": [0, 102], "fixedrange": True},
+        margin={"l": 8, "r": 8, "t": 55, "b": 8},
+        hovermode=False,
+    )
+    return figure
+
+
+def sole_component_explorer_figure(assembly: dict, selected_component: str) -> go.Figure:
+    """Render an annotated 2D sectional digital mock-up for first-time readers.
+
+    Each part is drawn as an independent layer.  The selected part receives a
+    heavier outline, while force, sealing and optical paths remain visible at
+    the same time so their different roles are not conflated.
+    """
+    case = str(assembly["assembly_case"])
+    if selected_component not in _SOLE_COMPONENT_COPY:
+        raise ValueError("未知足底点读部件")
+    insufficient = case == "压入不足"
+    offset = 5 if case == "单侧错位" else 0
+    figure = go.Figure()
+    components = (
+        ("可更换耐磨外底", 11 + offset, 49 + offset, 78, 89, "#d8893f"),
+        ("分区传力模块", 15 + offset, 45 + offset, 65, 75, "#eab76f"),
+        ("柔性隔离膜", 13 + offset, 47 + offset, 59, 63, "#efd4b0"),
+        ("周向密封圈", 9, 51, 54, 58, "#45a58c"),
+        ("定位柱与锁止件", 18, 23, 34, 54, "#6a8798"),
+        ("固定光纤感知芯", 14, 46, 42, 51, "#45aeca"),
+        ("基板与限位台阶", 10, 50, 27, 40, "#7895a3"),
+    )
+    for name, x0, x1, y0, y1, color in components:
+        selected = name == selected_component
+        figure.add_shape(
+            type="rect", x0=x0, x1=x1, y0=y0, y1=y1, fillcolor=color,
+            line={"color": "#d14646" if selected else "#29495a", "width": 3 if selected else 1.3},
+        )
+        figure.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=name,
+                              showarrow=False, font={"size": 11, "color": "#132a38"})
+
+    # A small bottom view lets readers see the six independently replaceable force regions.
+    for index in range(6):
+        column, row = index % 3, index // 3
+        x0, y0 = 66 + column * 10, 57 - row * 18
+        figure.add_shape(type="rect", x0=x0, x1=x0 + 8, y0=y0, y1=y0 + 14,
+                         fillcolor="#eab76f", line={"color": "#29495a", "width": 1.2})
+        figure.add_annotation(x=x0 + 4, y=y0 + 7, text=f"分区 {index + 1}", showarrow=False,
+                              font={"size": 10, "color": "#132a38"})
+    figure.add_shape(type="rect", x0=63, x1=98, y0=18, y1=77, line={"color": "#45a58c", "width": 3, "dash": "dash"})
+    figure.add_annotation(x=80.5, y=13, text="底视：六区传力模块与周向密封边界", showarrow=False,
+                          font={"size": 11, "color": "#29495a"})
+
+    # These three traces are deliberately visually distinct, not alternative measurements.
+    figure.add_scatter(x=[30 + offset, 30 + offset, 30], y=[90, 62, 42], mode="lines+markers",
+                       name="受力路径", line={"color": "#cf6c2b", "width": 5},
+                       marker={"size": 7, "symbol": "triangle-down"}, hoverinfo="skip")
+    figure.add_scatter(x=[10, 50, 50, 10, 10], y=[56, 56, 29, 29, 56], mode="lines",
+                       name="密封路径", line={"color": "#16866f", "width": 3, "dash": "dash"}, hoverinfo="skip")
+    figure.add_scatter(x=[16, 24, 32, 40, 46], y=[47, 45, 48, 45, 47], mode="lines+markers",
+                       name="光纤信号路径", line={"color": "#176f9a", "width": 4},
+                       marker={"size": 6}, hoverinfo="skip")
+
+    if insufficient:
+        figure.add_shape(type="rect", x0=11, x1=49, y0=75, y1=78, fillcolor="rgba(209,70,70,.18)",
+                         line={"color": "#d14646", "width": 1.5, "dash": "dot"})
+        figure.add_annotation(x=52, y=76.5, text="未到位间隙", showarrow=True, ax=55, ay=0,
+                              arrowhead=2, font={"color": "#b83a3a", "size": 12})
+    elif offset:
+        figure.add_annotation(x=52, y=75, text="上部模块横向偏移", showarrow=True, ax=55, ay=-25,
+                              arrowhead=2, font={"color": "#b83a3a", "size": 12})
+    else:
+        figure.add_annotation(x=53, y=66, text="定位与轴向限位到位（模型设定）", showarrow=True, ax=50, ay=-5,
+                              arrowhead=2, font={"color": "#176f7d", "size": 12})
+
+    title = _SOLE_COMPONENT_COPY[selected_component]["title"]
+    body = _SOLE_COMPONENT_COPY[selected_component]["body"]
+    figure.add_annotation(x=30, y=8, text=f"<b>点读：{title}</b><br>{body}", showarrow=False,
+                          align="left", font={"size": 12, "color": "#173445"})
+    figure.add_annotation(x=50, y=98, text=f"<b>装配状态：{case}</b>　红框为当前点读部件；橙=受力，绿虚线=密封，蓝=光纤信号。",
+                          showarrow=False, font={"size": 13, "color": "#173445"})
+    figure.update_layout(
+        title="足底组件数字样机：结构、受力、密封与信号分层可读",
+        template="plotly_white", height=570, hovermode=False,
+        xaxis={"visible": False, "range": [0, 102], "fixedrange": True},
+        yaxis={"visible": False, "range": [0, 102], "fixedrange": True},
+        legend={"orientation": "h", "x": .25, "y": .2, "font": {"size": 12}},
+        margin={"l": 8, "r": 8, "t": 55, "b": 8},
+    )
+    return figure
+
+
+_SOLE_COMPONENT_COPY = {
+    "可更换耐磨外底": {"title": "可更换耐磨外底", "body": "接触地面的磨耗件；更换时不移动固定感知芯。"},
+    "分区传力模块": {"title": "分区传力模块", "body": "把接触载荷分配至不同区域，供六区载荷教学模型读取。"},
+    "柔性隔离膜": {"title": "柔性隔离膜", "body": "使主要受力传递与周向密封功能分离；其实际材料行为仍需实物标定。"},
+    "周向密封圈": {"title": "周向密封圈", "body": "围绕接口形成密封路径；本界面不表示 IP 等级或实物密封结论。"},
+    "定位柱与锁止件": {"title": "定位柱与锁止件", "body": "控制周向位置并协助锁定；与轴向限位共同约束复装深度。"},
+    "固定光纤感知芯": {"title": "固定光纤感知芯", "body": "容纳工作/参考 FBG 与布线通道，作为复装后空载基线比较的固定对象。"},
+    "基板与限位台阶": {"title": "基板与限位台阶", "body": "提供安装基准与轴向止挡，避免仅凭外观判断是否压入到位。"},
+}
+
+
+def assembly_tolerance_confusion_figure(result: dict) -> go.Figure:
+    """Render a count matrix for the assumed tolerance-screening simulation."""
+    labels = list(result["labels"])
+    figure = go.Figure(
+        go.Heatmap(
+            x=["预测正常", "预测压入不足", "预测单侧错位"],
+            y=[f"设定{label}" for label in labels],
+            z=result["confusion_matrix"],
+            colorscale="Blues",
+            texttemplate="%{z}",
+            colorbar={"title": "样本数"},
+        )
+    )
+    figure.update_layout(**_base_layout("装配公差扫描：设定工况与预测标签", "模型预测", "设定工况"))
+    return figure
+
+
+def seal_compression_screen_figure(result: dict) -> go.Figure:
+    """Render relative seal compression around the assumed circumference."""
+    figure = go.Figure(
+        go.Scatter(
+            x=result["angle_deg"],
+            y=np.asarray(result["compression_ratio"]) * 100.0,
+            mode="lines",
+            line={"color": COLORS["estimate"], "width": 3},
+            name="相对压缩率",
+        )
+    )
+    figure.add_hline(y=0.0, line_dash="dot", line_color="#6c757d")
+    figure.update_layout(**_base_layout("周向密封压缩敏感性（非密封等级结论）", "周向角度 (°)", "相对压缩率 (%)"))
+    return figure
+
+
+def preload_retention_sensitivity_figure(result: dict) -> go.Figure:
+    """Render an assumed preload-retention sensitivity curve for test planning."""
+    figure = go.Figure(
+        go.Scatter(
+            x=result["cycle_count"],
+            y=result["preload_ue"],
+            mode="lines",
+            line={"color": COLORS["sensor"], "width": 3},
+            name="假设预应变",
+        )
+    )
+    figure.update_layout(**_base_layout("循环后预应变保持敏感性（非寿命预测）", "循环次数", "预应变 (με)"))
+    return figure
+
+
 def demodulation_figure(result: dict) -> go.Figure:
     """Render raw, filtered and temperature-compensated wavelength signals on time."""
     time_s = np.asarray(result["time_s"], dtype=float)
@@ -211,6 +497,11 @@ def dexterous_hand_pose(
         palm_center - .50 * palm_length * forward + .50 * palm_width * lateral,
         palm_center - .50 * palm_length * forward - .50 * palm_width * lateral,
     ])
+    palm_fiber_route = np.vstack([
+        palm_center - .33 * palm_length * forward - .18 * palm_width * lateral,
+        palm_center + .08 * palm_length * forward,
+        palm_center + .33 * palm_length * forward + .18 * palm_width * lateral,
+    ])
     curl_by_action = {"抬臂": 8.0, "伸手": 4.0, "抓取": 84.0, "按压": 62.0, "松开": 18.0, "复位": 12.0}
     curl = curl_by_action.get(action, 12.0)
     curls = finger_curls_deg if finger_curls_deg is not None else (curl * .75, curl, curl, curl, curl)
@@ -246,6 +537,7 @@ def dexterous_hand_pose(
         "arm_joints": arm_joints,
         "palm_center": palm_center,
         "palm_outline": palm_outline,
+        "palm_fiber_route": palm_fiber_route,
         "fingers": fingers,
         "fiber_routes": fiber_routes,
         "target": target,
@@ -455,6 +747,7 @@ def arm_figure(action: str, route: str, finger_angle_deg: float, contact_force_n
     ):
         figure.add_scatter(x=[start[0], end[0]], y=[start[1], end[1]], mode="lines+markers", name=name, line={"width": width, "color": color}, marker={"size": max(9, width - 6), "color": "#d8e7ef"}, hovertemplate=f"{name}<extra></extra>")
     figure.add_scatter(x=palm_outline[:, 0], y=palm_outline[:, 1], mode="lines", fill="toself", name="掌壳", line={"width": 3, "color": "#9db7c7"}, fillcolor="rgba(112, 146, 164, .82)")
+    figure.add_scatter(x=pose["palm_fiber_route"][:, 0], y=pose["palm_fiber_route"][:, 1], mode="lines+markers", name="掌心 FBG", line={"width": 5, "color": "#29c4d7"}, marker={"size": 6, "color": "#75eef5"}, hovertemplate="掌心 FBG：第六触觉通道<extra></extra>")
     for index, (finger, fiber) in enumerate(zip(fingers, fiber_routes), 1):
         contact = index - 1 in grasp["contact_fingers"]
         figure.add_scatter(x=finger[:, 0], y=finger[:, 1], mode="lines+markers", name=f"手指 {index}", line={"width": 8, "color": "#ffcc66" if contact else "#d8e7ef"}, marker={"size": 7, "color": "#ff8a4c" if contact else "#506d80"}, hovertemplate=f"手指 {index}<extra></extra>")
@@ -486,6 +779,7 @@ def planar_hand_transition_figure(
     def traces(amount: float) -> list[go.Scatter]:
         arm = blend(previous_pose["arm_joints"], current_pose["arm_joints"], amount)
         palm = blend(previous_pose["palm_outline"], current_pose["palm_outline"], amount)
+        palm_fibre = blend(previous_pose["palm_fiber_route"], current_pose["palm_fiber_route"], amount)
         fingers = [blend(before, after, amount) for before, after in zip(previous_pose["fingers"], current_pose["fingers"])]
         fibres = [blend(before, after, amount) for before, after in zip(previous_pose["fiber_routes"], current_pose["fiber_routes"])]
         can = blend(previous_can_center, current_can_center, amount)
@@ -498,6 +792,7 @@ def planar_hand_transition_figure(
         ):
             scene.append(go.Scatter(x=[start[0], end[0]], y=[start[1], end[1]], mode="lines+markers", name=name, line={"width": width, "color": color}, marker={"size": max(9, width - 6), "color": "#d8e7ef"}))
         scene.append(go.Scatter(x=palm[:, 0], y=palm[:, 1], mode="lines", fill="toself", name="掌壳", line={"width": 3, "color": "#9db7c7"}, fillcolor="rgba(112,146,164,.82)"))
+        scene.append(go.Scatter(x=palm_fibre[:, 0], y=palm_fibre[:, 1], mode="lines+markers", name="掌心 FBG", line={"width": 5, "color": "#29c4d7"}, marker={"size": 5, "color": "#75eef5"}))
         for index, (finger, fibre) in enumerate(zip(fingers, fibres), 1):
             active = grasped and index in (1, 2, 3, 4)
             scene.append(go.Scatter(x=finger[:, 0], y=finger[:, 1], mode="lines+markers", name=f"手指 {index}", line={"width": 8, "color": "#ffcc66" if active else "#d8e7ef"}, marker={"size": 7, "color": "#ff8a4c" if active else "#506d80"}))
@@ -509,6 +804,7 @@ def planar_hand_transition_figure(
     all_points = np.vstack([
         np.asarray(previous_pose["arm_joints"]), np.asarray(current_pose["arm_joints"]),
         np.asarray(previous_pose["palm_outline"]), np.asarray(current_pose["palm_outline"]),
+        np.asarray(previous_pose["palm_fiber_route"]), np.asarray(current_pose["palm_fiber_route"]),
         np.asarray(previous_can_center), np.asarray(current_can_center),
     ])
     center = (all_points.min(axis=0) + all_points.max(axis=0)) / 2
@@ -680,6 +976,33 @@ def foot_schematic_figure(zones: np.ndarray, terrain: str) -> go.Figure:
         figure.add_annotation(x=x+.45, y=y+.42, text=f"区 {index+1}<br>{value:.0f} N", showarrow=False, font={"color":"white"})
     figure.add_scatter(x=[.1,.8,1.5,2.2,2.7], y=[1.65,1.4,1.55,1.3,.25], mode="lines+markers", name="足底 FBG 走线", line={"color":"#29c4d7","width":6})
     figure.update_layout(title=f"足底六区接触与光纤阵列：{terrain}", template="plotly_dark", height=390, xaxis={"visible":False,"range":[-.1,3.1]}, yaxis={"visible":False,"range":[-.1,2.1],"scaleanchor":"x"}, margin={"l":10,"r":10,"t":50,"b":10})
+    return figure
+
+
+def foot_fbg_dashboard_figure(wavelength_shifts_nm: np.ndarray, zone_loads_n: np.ndarray) -> go.Figure:
+    """Show the six live FBG channels and their matching teaching loads together."""
+    shifts = np.asarray(wavelength_shifts_nm, dtype=float)
+    loads = np.asarray(zone_loads_n, dtype=float)
+    if shifts.shape != (6,) or loads.shape != (6,):
+        raise ValueError("足底 FBG 数据看板需要六路波长漂移与六个区域载荷")
+    labels = [f"FBG {index}" for index in range(1, 7)]
+    figure = make_subplots(specs=[[{"secondary_y": True}]])
+    figure.add_bar(
+        x=labels, y=shifts, name="FBG 波长漂移", marker_color=COLORS["sensor"],
+        text=[f"{value:.4f}" for value in shifts], textposition="outside", secondary_y=False,
+    )
+    figure.add_scatter(
+        x=labels, y=loads, mode="lines+markers+text", name="区域载荷",
+        line={"color": COLORS["estimate"], "width": 3}, marker={"size": 9},
+        text=[f"{value:.0f} N" for value in loads], textposition="top center", secondary_y=True,
+    )
+    figure.update_layout(
+        title="实时足底结果：六路 FBG 波长漂移与六区载荷",
+        template="plotly_white", height=360, legend={"orientation": "h", "y": 1.14},
+        margin={"l": 20, "r": 20, "t": 65, "b": 25},
+    )
+    figure.update_yaxes(title_text="波长漂移 Δλ (nm)", secondary_y=False)
+    figure.update_yaxes(title_text="区域载荷 (N)", secondary_y=True)
     return figure
 
 

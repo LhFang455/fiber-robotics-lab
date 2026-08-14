@@ -71,12 +71,17 @@ with st.sidebar:
     drift = st.slider("零点漂移 (nm)", 0.0, 0.020, 0.000, 0.0005, format="%.4f", key="global_drift")
     sample_rate = st.select_slider("采样率 (Hz)", options=[10, 25, 50, 100, 200], value=50, key="global_sample_rate")
     failed = st.selectbox("模拟失效通道", ["无", "手部 FBG 1", "手部 FBG 2", "手部 FBG 3", "足底区域 1"], key="global_failed_channel")
+    sole_assembly_case = st.selectbox(
+        "可更换足底复装工况（教学设置）",
+        ["正常装配", "压入不足", "单侧错位"],
+        key="sole_assembly_case",
+    )
     seed = st.number_input("随机种子", min_value=0, value=7, step=1, key="global_seed")
     st.divider()
     st.info("FBG 模型：Δλᵦ = λᵦ[(1−pₑ)ε + kₜΔT]。所有页面均显示真实量与反演量。")
 
-overview_tab, hand_tab, hand_3d_tab, calibration_tab, tactile_tab, foot_tab, shape_tab, health_tab, distributed_tab, fbg_simplus_tab, polarization_tab, chain_tab = st.tabs(
-    ["① 系统总览", "② 二维手部抓取", "③ 三维抓取传感", "④ FBG 标定与诊断", "⑤ 多材质触觉识别", "⑥ 足底平衡与步态", "⑦ 连续体形状重建", "⑧ 机械臂健康监测", "⑨ 分布式光纤感知", "⑩ FBG-SimPlus 兼容", "⑪ 偏振与干涉传感", "⑫ 解调器与实验任务"]
+overview_tab, hand_tab, hand_3d_tab, calibration_tab, tactile_tab, foot_tab, shape_tab, health_tab, distributed_tab, fbg_simplus_tab, polarization_tab, chain_tab, assembly_tab = st.tabs(
+    ["① 系统总览", "② 二维手部抓取", "③ 三维抓取传感", "④ FBG 标定与诊断", "⑤ 多材质触觉识别", "⑥ 足底平衡与步态", "⑦ 连续体形状重建", "⑧ 机械臂健康监测", "⑨ 分布式光纤感知", "⑩ FBG-SimPlus 兼容", "⑪ 偏振与干涉传感", "⑫ 解调器与实验任务", "⑬ 可更换足底装配校验"]
 )
 
 with overview_tab:
@@ -93,6 +98,7 @@ with overview_tab:
         (9, "FBG-SimPlus 兼容", "检查 COMSOL FEM 导出数据，并进入原工具完成光谱仿真"),
         (10, "偏振与干涉传感", "Stokes 偏振态、Sagnac 陀螺与 EFPI 干涉谱"),
         (11, "解调器与实验任务", "波长流、滤波温补、控制输出与实验报告"),
+        (12, "可更换足底装配校验", "空载温补基线、压入不足与单侧错位的二维预测"),
     ])
     st.subheader("当前测量配置")
     config_a, config_b, config_c, config_d = st.columns(4)
@@ -120,7 +126,7 @@ with hand_tab:
     if "arm_action" not in st.session_state:
         st.session_state.arm_action = "伸手"
     if "can_world_center" not in st.session_state:
-        st.session_state.can_world_center = np.asarray(visuals.dexterous_hand_pose("伸手")["target"])
+        st.session_state.can_world_center = np.asarray(visuals.dexterous_hand_pose("抓取")["target"])
         st.session_state.can_grasped = False
         st.session_state.can_relative_to_palm = np.zeros(2)
     if "can_position_x" not in st.session_state:
@@ -356,7 +362,8 @@ with hand_tab:
             ),
             width="stretch",
         )
-        st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 6), planar_fbg["wavelength_shifts_nm"], "二维抓取：五路 FBG 波长漂移"), width="stretch")
+        st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 7), planar_fbg["wavelength_shifts_nm"], "二维抓取：五指与掌心六路 FBG 波长漂移"), width="stretch")
+        st.caption(f"第 6 路为掌心 FBG：{'检测到掌心接触' if planar_fbg_decision['palm_contact'] else '当前无掌心接触'}。抓稳判定仍保持原有的“拇指＋至少两根其余手指”规则。")
     st.session_state.two_d_previous_pose = pose
     st.session_state.two_d_previous_can_center = np.asarray(can_center, dtype=float)
     st.session_state.two_d_previous_grasped = bool(st.session_state.can_grasped)
@@ -387,6 +394,7 @@ with tactile_tab:
 
 with foot_tab:
     st.subheader("机器人足：六区足底接触、地形与步态相位")
+    st.caption("本页以六区足底载荷、六路 FBG 波长漂移、CoP 与步态相位为主；复装校验作为辅助结构说明保留在下方。")
     terrain = st.selectbox("地形", ["平地", "前倾坡面", "后倾坡面", "柔软地面"])
     load = st.slider("总垂直载荷 (N)", 0.0, 400.0, 180.0, 5.0)
     phase = st.slider("步态相位 (%)", 0, 100, 55)
@@ -398,17 +406,36 @@ with foot_tab:
     foot_fbg = models.simulate_foot_fbg(zones, temperature, noise, int(seed))
     foot_estimate = models.estimate_foot_load_distribution(foot_fbg["wavelength_shifts_nm"], temperature)
     cop = foot_estimate["cop_region"]
-    st.caption("先观察六个足底区域的受力颜色和青色光纤走线，再对照下方的数值柱状图。")
+    assembly_overview = models.simulate_replaceable_sole_assembly(sole_assembly_case, temperature)
+    st.subheader("实时 FBG 和足底载荷结果")
+    st.plotly_chart(
+        visuals.foot_fbg_dashboard_figure(foot_fbg["wavelength_shifts_nm"], zones),
+        width="stretch",
+    )
+    st.caption("紫色柱表示六路实际显示的 FBG 波长漂移；橙色线表示与之对应的六区教学载荷。两者随地形、支撑状态、温度和噪声设置联动变化。")
+    a, b, c = st.columns(3)
+    a.metric("总支撑力", f"{zones.sum():.1f} N")
+    b.metric("压力中心 CoP", f"区域 {cop:.2f}")
+    c.metric("步态相位", f"{phase}% · {support}")
     foot_left, foot_right = st.columns([3, 2])
     with foot_left:
         st.plotly_chart(visuals.foot_schematic_figure(zones, terrain), width="stretch")
     with foot_right:
         st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 7), foot_fbg["wavelength_shifts_nm"], "足底六路 FBG 波长漂移"), width="stretch")
-    a, b, c = st.columns(3)
-    a.metric("总支撑力", f"{zones.sum():.1f} N")
-    b.metric("压力中心 CoP", f"区域 {cop:.2f}")
-    c.metric("步态相位", f"{phase}% · {support}")
     st.caption("六区读数采用独立线性标定，并先做共模温度补偿后反演区域载荷和 CoP；实际步态还需加入动态冲击与足部姿态补偿。")
+    with st.expander("复装与结构说明（辅助）"):
+        empty_load_gate = models.assess_replaceable_sole_sensing_readiness(sole_assembly_case, 0.0)
+        status_a, status_b = st.columns(2)
+        status_a.metric("当前复装工况", sole_assembly_case)
+        status_b.metric("空载筛查（仿真候选）", str(empty_load_gate["assembly_prediction"]))
+        st.caption("装配自检必须在卸载状态下完成；下方结构图用于说明模块关系，不替代实物装配、密封或耐久验证。")
+        selected_sole_component = st.selectbox(
+            "点读部件（红框高亮）",
+            ["可更换耐磨外底", "分区传力模块", "柔性隔离膜", "周向密封圈", "定位柱与锁止件", "固定光纤感知芯", "基板与限位台阶"],
+            key="selected_sole_component",
+        )
+        st.plotly_chart(visuals.sole_component_explorer_figure(assembly_overview, selected_sole_component), width="stretch")
+        st.plotly_chart(visuals.replaceable_sole_explainer_figure(assembly_overview, zones, terrain, cop, support), width="stretch")
 
 with calibration_tab:
     st.subheader("FBG 标定与诊断")
@@ -485,7 +512,7 @@ with calibration_tab:
 
 with hand_3d_tab:
     st.subheader("三维抓取传感：独立接触与 FBG 读数")
-    st.caption("本页不读取二维抓取的姿态、罐体位置或抓取结果。它以三维手自身的五指屈曲与罐体 X/Y/Z 偏移，独立估算指尖接触、握持稳定度和五路 FBG 读数。")
+    st.caption("本页不读取二维抓取的姿态、罐体位置或抓取结果。它以三维手自身的五指屈曲与罐体 X/Y/Z 偏移，独立估算指尖接触、握持稳定度和五指＋掌心六路 FBG 读数。")
 
     if "three_d_action" not in st.session_state:
         st.session_state.three_d_action = "三维张开"
@@ -692,9 +719,14 @@ with hand_3d_tab:
     three_d_fbg_decision = models.classify_3d_grasp_from_fbg(three_d_sensing, temperature)
     three_d_render_finger_joints = three_d_sensing["collision_limited_joint_angles_deg"]
     three_d_shifts = models.add_gaussian_noise(three_d_sensing["fbg_shifts_nm"], noise, int(seed) + 300)
+    three_d_palm_shift = models.add_gaussian_noise(
+        np.asarray([three_d_sensing["tactile_fbg_shifts_nm"][-1]]), noise, int(seed) + 301
+    )
+    three_d_display_shifts = np.r_[three_d_shifts, three_d_palm_shift]
 
     with display:
         st.caption("拖动模型可旋转视角；滚轮缩放保持关闭。物体保持世界坐标，寻找程序移动手部抓取包络至目标。")
+        st.info("青色发光线表示 FBG 封装/走线路径：肩—肘—腕为弯曲监测；掌部两条短线为掌心接触区域；每根手指上的分段线为指节触觉区域。青色只表示传感路径，不表示受力大小；接触后对应路径会变为黄色。")
         st.iframe(
             visuals.anthropomorphic_hand_html(
                 st.session_state.three_d_action,
@@ -722,21 +754,32 @@ with hand_3d_tab:
         st.success("三维 FBG 判定：温度补偿后，掌心、拇指及至少两根手指的触觉通道均达到握持阈值。")
     else:
         st.warning("三维传感判定：请将罐体移回抓取包络，并提高拇指和至少两根手指的屈曲。")
-    st.plotly_chart(
-        visuals.sensor_bar_figure(np.arange(1, 6), three_d_shifts, "三维抓取：五指综合 FBG 波长漂移"),
-        width="stretch",
-    )
+    three_d_result_chart, three_d_result_notes = st.columns([3, 2])
+    with three_d_result_chart:
+        st.plotly_chart(
+            visuals.sensor_bar_figure(np.arange(1, 7), three_d_display_shifts, "三维抓取：五指与掌心六路 FBG 波长漂移"),
+            width="stretch",
+        )
+    with three_d_result_notes:
+        st.markdown("#### 图表结果说明")
+        st.markdown(
+            "- **第 1–5 路**：拇指至小指的综合弯曲／接触通道。\n"
+            "- **第 6 路**：掌心接触通道；它与五指通道分开显示，不等同于任一手指。\n"
+            "- **柱高**：当前温度、噪声、关节屈曲与接触状态共同作用后的波长漂移。\n"
+            "- **抓稳判定**：温度补偿后，掌心、拇指和至少两根其余手指的触觉条件共同满足时，才显示“FBG 已抓稳”。\n"
+            "- **阅读顺序**：先看六路柱状分布，再对照下方指尖接触力、细分指节／掌心通道和稳定度。"
+        )
     st.bar_chart({"三维指尖接触力 (N)": np.asarray(three_d_sensing["contact_force_n"])})
-    st.bar_chart({"14 个指节触觉 FBG 波长漂移 (nm)": three_d_sensing["tactile_fbg_shifts_nm"][:14]})
+    st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 16), three_d_sensing["tactile_fbg_shifts_nm"], "细分触觉 FBG：14 个指节＋第 15 路掌心"), width="stretch")
     tactile_left, tactile_right = st.columns(2)
     with tactile_left:
         st.bar_chart({"手掌与五指触觉 (N)": np.r_[three_d_sensing["palm_touch_n"], three_d_sensing["contact_force_n"]]})
     with tactile_right:
         st.bar_chart({"肩、肘、腕 FBG 弯曲应变 (με)": three_d_sensing["arm_bend_strain_ue"]})
-    st.caption("青色光纤覆盖肩—肘—腕、两条掌部路线及全部 14 个手指指节：掌/指读数用于触觉，臂部读数用于弯曲。")
+    st.caption("通道对应关系：六路总览的第 1–5 路为拇指至小指综合通道，第 6 路为掌心；细分图第 1–14 路为指节，第 15 路为掌心。青色光纤覆盖肩—肘—腕、两条掌部路线及全部 14 个手指指节。")
     st.download_button(
         "下载三维抓取 FBG 读数 CSV",
-        csv_bytes(["拇指 FBG", "食指 FBG", "中指 FBG", "无名指 FBG", "小指 FBG"], three_d_shifts),
+        csv_bytes(["拇指 FBG", "食指 FBG", "中指 FBG", "无名指 FBG", "小指 FBG", "掌心 FBG"], three_d_display_shifts),
         "three_dimensional_grasp_fbg_readings.csv",
         "text/csv",
     )
@@ -1014,3 +1057,62 @@ with chain_tab:
         "说明：此报告基于解析教学模型，不可替代真实系统的标定、风险评估或安全决策。\n"
     )
     st.download_button("下载当前实验报告", report.encode("utf-8-sig"), "fiber_robotics_sensing_chain_report.txt", "text/plain")
+
+with assembly_tab:
+    st.subheader("可更换式足底组件：二维装配状态预测")
+    st.caption("固定光纤感知芯与可更换耐磨外底/分区传力模块分离；以下是空载、恒温条件下的解析仿真预测，不是实物验收、密封或耐久结论。")
+    assembly = models.simulate_replaceable_sole_assembly(sole_assembly_case, temperature)
+    parameters = assembly["case_parameters"]
+    assembly_left, assembly_right = st.columns([1, 2])
+    with assembly_left:
+        st.metric("当前复装工况", sole_assembly_case)
+        st.metric("空载装配预测", str(assembly["assembly_prediction"]))
+        st.metric("平均基线残差", f"{float(assembly['mean_baseline_residual_ue']):+.1f} με")
+        st.metric("左右工作光栅差异", f"{float(assembly['left_right_difference_ue']):.1f} με")
+    with assembly_right:
+        st.plotly_chart(visuals.replaceable_sole_transfer_figure(assembly), width="stretch")
+    st.markdown("**计算流程：** 设定复装工况 → 生成二维相对传力场 → 比较两枚工作光栅与一枚参考光栅 → 温度补偿 → 比较空载基线残差和左右差异 → 输出仿真筛查结果。")
+    st.markdown("**边界：** 定位柱、锁止件、轴向限位、周向密封圈和柔性隔离膜在此作为结构方案边界；不计算接触应力、泄漏、材料疲劳、耐磨或 IP 等级。")
+    st.divider()
+    st.subheader("装配公差与阈值敏感性")
+    tolerance_left, tolerance_right = st.columns([1, 2])
+    with tolerance_left:
+        tolerance_samples = st.slider("每工况仿真样本数", 20, 300, 100, 20)
+        tolerance_noise = st.slider("装配筛查波长噪声 (nm)", 0.0, 0.010, 0.002, 0.0005, format="%.4f")
+    tolerance_scan = models.simulate_replaceable_sole_tolerance_scan(int(tolerance_samples), temperature, tolerance_noise, int(seed))
+    with tolerance_right:
+        st.plotly_chart(visuals.assembly_tolerance_confusion_figure(tolerance_scan), width="stretch")
+    thermal_left, thermal_right = st.columns(2)
+    with thermal_left:
+        reference_temperature_offset = st.slider("参考光栅相对温差 (°C)", -5.0, 5.0, 0.0, 0.1)
+        thermal_mismatch = models.simulate_reference_temperature_mismatch(temperature, temperature + reference_temperature_offset)
+        st.metric("温度失配引入的基线偏置", f"{float(thermal_mismatch['baseline_bias_ue']):+.1f} με")
+        st.caption(str(thermal_mismatch["validation_boundary"]))
+    with thermal_right:
+        operational_load = st.slider("比较用使用载荷 (N)", 0.0, 400.0, 180.0, 5.0)
+        operational = models.simulate_assembly_operational_load_interference(operational_load, temperature)
+        st.metric("使用载荷机械信号均值", f"{float(np.mean(operational['operational_signal_ue'])):.1f} με")
+        st.caption(f"装配自检条件：{operational['assembly_check_condition']}；{operational['validation_boundary']}。")
+    st.divider()
+    st.subheader("密封与预应变保持：试验规划敏感性")
+    seal_left, retention_right = st.columns(2)
+    with seal_left:
+        seal_nominal_compression = st.slider("名义密封压缩率", 0.05, 0.40, 0.20, 0.01)
+        seal_lateral_offset = st.slider("密封分析横向错位 (mm)", 0.0, 2.0, 0.80, 0.05)
+        seal = models.simulate_seal_compression_screen(seal_nominal_compression, seal_lateral_offset)
+        st.plotly_chart(visuals.seal_compression_screen_figure(seal), width="stretch")
+        st.caption(f"最低相对压缩率：{float(seal['minimum_compression_ratio']) * 100:.1f}%；{seal['validation_boundary']}。")
+    with retention_right:
+        retention_cycles = st.slider("规划最大循环次数", 1000, 20000, 5000, 1000)
+        assumed_retention = st.slider("假设每千次预应变保持率", 0.90, 1.00, 0.985, 0.001)
+        retention = models.simulate_preload_retention_sensitivity(retention_cycles, assumed_retention)
+        st.plotly_chart(visuals.preload_retention_sensitivity_figure(retention), width="stretch")
+        st.caption(f"{retention['validation_boundary']}；保持率为试验规划假设，不是寿命预测。")
+    verification_summary = (
+        "可更换式足底组件验证参数摘要（仿真输入，不是实物结论）\n"
+        f"装配工况：{sole_assembly_case}\n温度变化：{temperature:.1f} °C\n随机种子：{int(seed)}\n"
+        f"名义预应变：{parameters['nominal_preload_ue']:.0f} με\n压入不足：{parameters['insertion_deficit_mm']:.1f} mm\n"
+        f"横向错位：{parameters['lateral_offset_mm']:.1f} mm\n每工况样本数：{int(tolerance_samples)}\n波长噪声：{tolerance_noise:.4f} nm\n"
+        "边界：仍需材料参数标定、有限元复核、空载复装、温度梯度、步态载荷、密封及循环实物试验。\n"
+    )
+    st.download_button("下载装配验证参数摘要", verification_summary.encode("utf-8-sig"), "replaceable_sole_verification_parameters.txt", "text/plain")
