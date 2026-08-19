@@ -9,6 +9,8 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from fiber_robotics_sim import models
+
 
 COLORS = {"truth": "#17a2b8", "estimate": "#ff7f0e", "sensor": "#6f42c1"}
 
@@ -56,6 +58,47 @@ def sensor_bar_figure(positions: np.ndarray, shifts: np.ndarray, title: str) -> 
     figure = go.Figure(go.Bar(x=[f"FBG {index + 1}" for index in range(len(positions))], y=shifts, marker_color=COLORS["sensor"], text=[f"{value:.4f}" for value in shifts], textposition="outside"))
     figure.update_layout(**_base_layout(title, "传感器", "波长漂移 Δλ (nm)"))
     return figure
+
+
+def material_probability_figure(probabilities: dict[str, float]) -> go.Figure:
+    """Show the four candidate materials and their recognition probabilities."""
+    names = list(probabilities.keys())
+    values = [float(probabilities[name]) for name in names]
+    figure = go.Figure(go.Bar(
+        x=names,
+        y=values,
+        marker_color=COLORS["sensor"],
+        text=[f"{value * 100:.0f}%" for value in values],
+        textposition="outside",
+    ))
+    figure.update_layout(**_base_layout("触觉识别概率分布", "候选材质", "概率"))
+    return figure
+
+
+def sensing_chain_svg() -> str:
+    """Return an inline dark-theme SVG of the fibre-sensing chain."""
+    return """<svg viewBox="0 0 1000 220" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+  <defs><marker id="chain-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#44b8d5"/></marker></defs>
+  <rect x="20" y="55" width="190" height="110" rx="12" fill="#132a3b" stroke="#315064"/>
+  <text x="115" y="90" text-anchor="middle" fill="#8fd8ea" font-size="15" font-weight="700">光纤传感</text>
+  <text x="115" y="113" text-anchor="middle" fill="#a9c0cf" font-size="12">抓取 · 触觉 · 足底</text>
+  <text x="115" y="133" text-anchor="middle" fill="#a9c0cf" font-size="12">连续体 · 分布式</text>
+  <line x1="210" y1="110" x2="272" y2="110" stroke="#44b8d5" stroke-width="4" marker-end="url(#chain-arrow)"/>
+  <rect x="278" y="55" width="190" height="110" rx="12" fill="#132a3b" stroke="#315064"/>
+  <text x="373" y="90" text-anchor="middle" fill="#8fd8ea" font-size="15" font-weight="700">光纤解调</text>
+  <text x="373" y="113" text-anchor="middle" fill="#a9c0cf" font-size="12">波长读取 · 滤波温补</text>
+  <text x="373" y="133" text-anchor="middle" fill="#a9c0cf" font-size="12">冗余故障隔离</text>
+  <line x1="468" y1="110" x2="530" y2="110" stroke="#44b8d5" stroke-width="4" marker-end="url(#chain-arrow)"/>
+  <rect x="536" y="55" width="190" height="110" rx="12" fill="#132a3b" stroke="#315064"/>
+  <text x="631" y="90" text-anchor="middle" fill="#8fd8ea" font-size="15" font-weight="700">状态估计</text>
+  <text x="631" y="113" text-anchor="middle" fill="#a9c0cf" font-size="12">CoP · 曲率 · 异常位置</text>
+  <text x="631" y="133" text-anchor="middle" fill="#a9c0cf" font-size="12">分布式定位 · 偏振态</text>
+  <line x1="726" y1="110" x2="788" y2="110" stroke="#44b8d5" stroke-width="4" marker-end="url(#chain-arrow)"/>
+  <rect x="794" y="55" width="190" height="110" rx="12" fill="#132a3b" stroke="#315064"/>
+  <text x="889" y="90" text-anchor="middle" fill="#8fd8ea" font-size="15" font-weight="700">控制与任务</text>
+  <text x="889" y="113" text-anchor="middle" fill="#a9c0cf" font-size="12">张开 / 闭合命令</text>
+  <text x="889" y="133" text-anchor="middle" fill="#a9c0cf" font-size="12">多模态任务报告</text>
+</svg>"""
 
 
 def replaceable_sole_transfer_figure(result: dict) -> go.Figure:
@@ -374,8 +417,75 @@ def distributed_curve_figure(result: dict, mechanism: str) -> go.Figure:
 
 def das_event_figure(result: dict) -> go.Figure:
     """Render a phi-OTDR/DAS time-distance event map."""
-    figure = go.Figure(go.Heatmap(x=result["position_mm"], y=result["time_s"], z=result["amplitude"], colorscale="Magma", colorbar={"title": "振动幅值"}))
-    figure.update_layout(title="φ-OTDR / DAS：时间—距离振动事件", template="plotly_dark", height=390, xaxis_title="光纤位置 (mm)", yaxis_title="时间 (s)")
+    x = result.get("position_mm", result.get("das_distance_mm"))
+    y = result.get("time_s", result.get("das_time_ms"))
+    z = result.get("amplitude", result.get("das_amplitude"))
+    time_label = "时间 (ms)" if "das_time_ms" in result else "时间 (s)"
+    figure = go.Figure(go.Heatmap(x=x, y=y, z=z, colorscale="Magma", colorbar={"title": "振动幅值"}))
+    figure.update_layout(title="φ-OTDR / DAS：时间—距离振动事件", template="plotly_dark", height=390, xaxis_title="光纤位置 (mm)", yaxis_title=time_label)
+    return figure
+
+
+def distributed_finger_figure(result: dict, contact_fingers: list[int] | None = None) -> go.Figure:
+    """Plot five-finger Rayleigh strain profiles, highlighting contacting fingers."""
+    distance = np.asarray(result["distance_mm"], dtype=float)
+    rayleigh = np.asarray(result["rayleigh_strain_ue"], dtype=float)
+    contacts = set(int(index) for index in (contact_fingers or []))
+    palette = ["#29c4d7", "#ffcc66", "#f0a58c", "#9be39b", "#c39bf3"]
+    figure = go.Figure()
+    for index in range(rayleigh.shape[0]):
+        active = index in contacts
+        figure.add_scatter(
+            x=distance,
+            y=rayleigh[index],
+            mode="lines",
+            name=f"手指 {index + 1}{'（接触）' if active else ''}",
+            line={"width": 4 if active else 2, "color": "#ff8a4c" if active else palette[index]},
+        )
+    figure.update_layout(**_base_layout("五指分布式 Rayleigh 应变（接触段出现峰）", "光纤距离 (mm)", "应变 (με)"))
+    return figure
+
+
+def arm_distributed_vs_fbg_figure(
+    distributed_result: dict,
+    fbg_positions_mm: np.ndarray,
+    fbg_strain_ue: np.ndarray,
+    suspected_mm: float,
+    uncertainty_mm: float,
+) -> go.Figure:
+    """Overlay a continuous Rayleigh strain profile on the discrete FBG array."""
+    position = np.asarray(distributed_result["position_mm"], dtype=float)
+    strain = np.asarray(distributed_result["strain_ue"], dtype=float)
+    figure = go.Figure()
+    figure.add_scatter(x=position, y=strain, mode="lines", name="分布式 Rayleigh 应变", line={"color": "#29c4d7", "width": 3})
+    figure.add_scatter(
+        x=np.asarray(fbg_positions_mm, dtype=float),
+        y=np.asarray(fbg_strain_ue, dtype=float),
+        mode="markers",
+        name="点式 FBG",
+        marker={"size": 12, "color": "#ff8a4c", "line": {"color": "#ffffff", "width": 1}},
+    )
+    figure.add_vrect(
+        x0=float(suspected_mm) - float(uncertainty_mm),
+        x1=float(suspected_mm) + float(uncertainty_mm),
+        fillcolor="rgba(255,77,79,.08)",
+        line_width=0,
+    )
+    figure.add_vline(x=float(suspected_mm), line_dash="dash", line_color="#ff4d4f")
+    figure.update_layout(**_base_layout("分布式 vs 点式 FBG：同一损伤的定位对比", "构件长度 (mm)", "应变 (με)"))
+    return figure
+
+
+def brillouin_raman_compensation_figure(result: dict) -> go.Figure:
+    """Show true/apparent/compensated strain with the Raman temperature profile."""
+    position = np.asarray(result["position_mm"], dtype=float)
+    figure = make_subplots(specs=[[{"secondary_y": True}]])
+    figure.add_scatter(x=position, y=result["true_strain_ue"], mode="lines", name="真实应变", line={"color": COLORS["truth"], "width": 3}, secondary_y=False)
+    figure.add_scatter(x=position, y=result["naive_strain_ue"], mode="lines", name="未温补（表观应变）", line={"color": "#ff8a4c", "width": 2, "dash": "dash"}, secondary_y=False)
+    figure.add_scatter(x=position, y=result["compensated_strain_ue"], mode="lines", name="温补后应变", line={"color": "#29c4d7", "width": 3}, secondary_y=False)
+    figure.add_scatter(x=position, y=result["temperature_change_c"], mode="lines", name="温度变化", line={"color": "#c39bf3", "width": 2}, secondary_y=True)
+    figure.update_layout(**_base_layout("Brillouin × Raman 温补解耦", "光纤位置 (mm)", "应变 (με)"))
+    figure.update_yaxes(title_text="温度变化 (°C)", secondary_y=True)
     return figure
 
 
@@ -391,6 +501,20 @@ def efpi_figure(result: dict) -> go.Figure:
     """Render the simulated EFPI interference spectrum."""
     figure = go.Figure(go.Scatter(x=result["wavelength_nm"], y=result["intensity"], mode="lines", line={"color": "#6f42c1", "width": 2}, name="干涉强度"))
     figure.update_layout(**_base_layout("EFPI：腔长变化引起的干涉谱", "波长 (nm)", "归一化反射强度"))
+    return figure
+
+
+def polarization_map_figure(result: dict) -> go.Figure:
+    """Show azimuth and ellipticity over a stress-twist grid."""
+    figure = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=("偏振方位角 (°)", "椭圆率角 (°)"),
+        horizontal_spacing=0.12,
+    )
+    figure.add_heatmap(x=result["twist_deg"], y=result["stress_mpa"], z=result["azimuth_deg"], colorscale="Viridis", row=1, col=1)
+    figure.add_heatmap(x=result["twist_deg"], y=result["stress_mpa"], z=result["ellipticity_deg"], colorscale="Magma", row=1, col=2)
+    figure.update_layout(title="双折射—扭转—温度联合视图（网格扫描）", template="plotly_white", height=430, xaxis_title="光纤扭转 (°)", yaxis_title="横向应力 (MPa)")
+    figure.update_xaxes(title_text="光纤扭转 (°)", row=1, col=2)
     return figure
 
 
@@ -442,107 +566,53 @@ def multicore_figure(result: dict) -> go.Figure:
     return figure
 
 
-def _arm_joint_coordinates(action: str) -> np.ndarray:
-    """Return base, elbow, wrist and hand locations for a named teaching action."""
-    poses_deg = {
-        "抬臂": (72.0, -50.0, -12.0),
-        "伸手": (18.0, 2.0, 0.0),
-        "抓取": (38.0, -58.0, 18.0),
-        "按压": (20.0, -68.0, -18.0),
-        "松开": (32.0, -35.0, 10.0),
-        "复位": (45.0, -60.0, 15.0),
-    }
-    angles = np.deg2rad(poses_deg.get(action, poses_deg["复位"]))
-    lengths = (3.5, 3.0, 1.25)
-    points = [np.array([0.0, 0.0])]
-    direction = 0.0
-    for length, angle in zip(lengths, angles):
-        direction += angle
-        points.append(points[-1] + length * np.array([np.cos(direction), np.sin(direction)]))
-    return np.asarray(points)
+def shape_distributed_link_figure(result: dict) -> go.Figure:
+    """Show per-core strain along the fibre next to a distributed Rayleigh peak."""
+    position = np.asarray(result["position_mm"], dtype=float)
+    core_profiles = np.asarray(result["core_strain_ue"], dtype=float)
+    palette = ["#29c4d7", "#ffcc66", "#c39bf3"]
+    figure = go.Figure()
+    for index in range(core_profiles.shape[0]):
+        figure.add_scatter(
+            x=position,
+            y=core_profiles[index],
+            mode="lines",
+            name=f"纤芯 {index + 1} 应变",
+            line={"width": 2.5, "color": palette[index]},
+        )
+    figure.add_scatter(
+        x=position,
+        y=result["rayleigh_strain_ue"],
+        mode="lines",
+        name="分布式 Rayleigh 局部峰（对比）",
+        line={"width": 3, "color": "#ff8a4c", "dash": "dash"},
+    )
+    figure.update_layout(**_base_layout("应变沿长度分布：形状重建与分布式传感的同一主线", "光纤位置 (mm)", "应变 (με)"))
+    return figure
 
 
-def _arm_fiber_route(joints: np.ndarray, route: str) -> np.ndarray:
-    """Place the selected FBG route relative to the current arm pose."""
-    elbow, wrist, hand = joints[1], joints[2], joints[3]
-    hand_direction = (hand - wrist) / np.linalg.norm(hand - wrist)
-    routes = {
-        "手指背侧": np.vstack([wrist + .45 * (hand - wrist), hand, hand + .45 * hand_direction]),
-        "指尖": np.vstack([hand - .10 * hand_direction, hand + .25 * hand_direction, hand + .55 * hand_direction]),
-        "手掌": np.vstack([wrist + .18 * (hand - wrist), wrist + .72 * (hand - wrist), hand + .15 * hand_direction]),
-        "前臂": np.vstack([elbow + .15 * (wrist - elbow), elbow + .55 * (wrist - elbow), wrist]),
-    }
-    return routes[route]
+def planar_animation_frame(
+    pose: dict,
+    can_center: np.ndarray,
+    grasped: bool,
+    contact_fingers: list[int] | None = None,
+) -> dict:
+    """Build one animation frame of the shared previous/current transition contract.
 
-
-def dexterous_hand_pose(
-    action: str,
-    joint_angles_deg: tuple[float, float, float] | None = None,
-    finger_curls_deg: tuple[float, float, float, float, float] | None = None,
-    wrist_rotation_deg: float = 0.0,
-    planar_translation: tuple[float, float] = (0.0, 0.0),
-) -> dict[str, np.ndarray | list[np.ndarray] | float]:
-    """Return a planar five-finger hand pose tied to the selected arm action."""
-    arm_joints = _arm_joint_coordinates(action) if joint_angles_deg is None else _arm_joint_coordinates_from_angles(joint_angles_deg)
-    arm_joints = arm_joints + np.asarray(planar_translation, dtype=float)
-    wrist, hand = arm_joints[2], arm_joints[3]
-    forward = (hand - wrist) / np.linalg.norm(hand - wrist)
-    lateral = np.array([-forward[1], forward[0]])
-    palm_center = hand + .35 * forward
-    palm_length, palm_width = 1.18, .67
-    palm_outline = np.vstack([
-        palm_center - .50 * palm_length * forward - .50 * palm_width * lateral,
-        palm_center + .50 * palm_length * forward - .50 * palm_width * lateral,
-        palm_center + .50 * palm_length * forward + .50 * palm_width * lateral,
-        palm_center - .50 * palm_length * forward + .50 * palm_width * lateral,
-        palm_center - .50 * palm_length * forward - .50 * palm_width * lateral,
-    ])
-    palm_fiber_route = np.vstack([
-        palm_center - .33 * palm_length * forward - .18 * palm_width * lateral,
-        palm_center + .08 * palm_length * forward,
-        palm_center + .33 * palm_length * forward + .18 * palm_width * lateral,
-    ])
-    curl_by_action = {"抬臂": 8.0, "伸手": 4.0, "抓取": 84.0, "按压": 62.0, "松开": 18.0, "复位": 12.0}
-    curl = curl_by_action.get(action, 12.0)
-    curls = finger_curls_deg if finger_curls_deg is not None else (curl * .75, curl, curl, curl, curl)
-    finger_offsets = (-.275, -.10, .10, .275)
-    finger_lengths = ((.62, .48, .36), (.70, .52, .40), (.66, .50, .38), (.58, .43, .32))
-    fingers: list[np.ndarray] = []
-    fiber_routes: list[np.ndarray] = []
-    for index, (offset, lengths) in enumerate(zip(finger_offsets, finger_lengths)):
-        base = palm_center + .50 * palm_length * forward + offset * lateral
-        splay = np.deg2rad(offset * 18.0)
-        local_curl = 88.0 if action == "按压" and index == 1 and finger_curls_deg is None else curls[index + 1]
-        direction = np.arctan2(forward[1], forward[0]) + splay
-        points = [base]
-        for length, joint_angle in zip(lengths, (0.0, local_curl, local_curl)):
-            direction += np.deg2rad(joint_angle)
-            points.append(points[-1] + length * np.array([np.cos(direction), np.sin(direction)]))
-        finger = np.asarray(points)
-        fingers.append(finger)
-        fiber_routes.append(finger + .055 * lateral)
-    thumb_base = palm_center + .10 * palm_length * forward - .60 * palm_width * lateral
-    thumb_direction = np.arctan2(forward[1], forward[0]) + np.deg2rad(50.0)
-    thumb_points = [thumb_base]
-    thumb_curl = curls[0]
-    for length, joint_angle in zip((.55, .42, .30), (0.0, thumb_curl, thumb_curl)):
-        thumb_direction += np.deg2rad(joint_angle)
-        thumb_points.append(thumb_points[-1] + length * np.array([np.cos(thumb_direction), np.sin(thumb_direction)]))
-    thumb = np.asarray(thumb_points)
-    fingers.insert(0, thumb)
-    fiber_routes.insert(0, thumb - .055 * lateral)
-    # 目标位于掌心偏拇指侧，闭合时由拇指与多根手指形成包络。
-    target = palm_center + .10 * forward + .46 * lateral
+    Both the 2D SVG renderer and the 3D renderer animate from a previous frame
+    to a current frame; the 2D side serialises a full frame here, while the 3D
+    side keeps the same previous/current convention with its capsule geometry.
+    """
+    contacts = [int(index) for index in (contact_fingers if contact_fingers is not None else (range(5) if grasped else []))]
     return {
-        "arm_joints": arm_joints,
-        "palm_center": palm_center,
-        "palm_outline": palm_outline,
-        "palm_fiber_route": palm_fiber_route,
-        "fingers": fingers,
-        "fiber_routes": fiber_routes,
-        "target": target,
-        "finger_curls_deg": np.asarray(curls, dtype=float),
-        "wrist_rotation_deg": float(wrist_rotation_deg),
+        "arm": np.asarray(pose["arm_joints"], dtype=float).tolist(),
+        "palm": np.asarray(pose["palm_outline"], dtype=float).tolist(),
+        "palmFibre": np.asarray(pose["palm_fiber_route"], dtype=float).tolist(),
+        "fingers": [np.asarray(finger, dtype=float).tolist() for finger in pose["fingers"]],
+        "fibres": [np.asarray(route, dtype=float).tolist() for route in pose["fiber_routes"]],
+        "can": np.asarray(can_center, dtype=float).tolist(),
+        "grasped": bool(grasped),
+        "contacts": contacts,
     }
 
 
@@ -553,28 +623,22 @@ def planar_hand_animation_html(
     current_can_center: np.ndarray,
     previous_grasped: bool,
     current_grasped: bool,
+    previous_contact_fingers: list[int] | None = None,
+    current_contact_fingers: list[int] | None = None,
+    animate: bool = True,
 ) -> str:
     """Render one continuous SVG transition between two planar grasp states."""
-    def serialise(pose: dict, can_center: np.ndarray, grasped: bool) -> dict:
-        return {
-            "arm": np.asarray(pose["arm_joints"], dtype=float).tolist(),
-            "palm": np.asarray(pose["palm_outline"], dtype=float).tolist(),
-            "fingers": [np.asarray(finger, dtype=float).tolist() for finger in pose["fingers"]],
-            "fibres": [np.asarray(route, dtype=float).tolist() for route in pose["fiber_routes"]],
-            "can": np.asarray(can_center, dtype=float).tolist(),
-            "grasped": bool(grasped),
-        }
-
     config = json.dumps({
-        "previous": serialise(previous_pose, previous_can_center, previous_grasped),
-        "current": serialise(current_pose, current_can_center, current_grasped),
+        "previous": planar_animation_frame(previous_pose, previous_can_center, previous_grasped, previous_contact_fingers),
+        "current": planar_animation_frame(current_pose, current_can_center, current_grasped, current_contact_fingers),
+        "animate": bool(animate),
     }, ensure_ascii=False)
     html = r'''<div style="height:620px;border-radius:18px;overflow:hidden;background:linear-gradient(135deg,#0b1119,#152938)">
 <svg id="planar-grasp" viewBox="0 0 1000 620" width="100%" height="100%" preserveAspectRatio="xMidYMid meet"></svg></div>
 <script>
 (() => {
  const cfg=__CONFIG__, svg=document.getElementById('planar-grasp'), ns='http://www.w3.org/2000/svg';
- const flat=s=>[...s.arm,...s.palm,...s.fingers.flat(),...s.fibres.flat(),s.can];
+ const flat=s=>[...s.arm,...s.palm,...s.palmFibre,...s.fingers.flat(),...s.fibres.flat(),s.can];
  const points=[...flat(cfg.previous),...flat(cfg.current)], xs=points.map(p=>p[0]), ys=points.map(p=>p[1]);
  const centerX=(Math.min(...xs)+Math.max(...xs))/2,centerY=(Math.min(...ys)+Math.max(...ys))/2;
  const viewWidth=12,viewHeight=9,scale=Math.min(900/viewWidth,500/viewHeight), ox=500-scale*centerX, oy=325+scale*centerY;
@@ -583,54 +647,22 @@ def planar_hand_animation_html(
  const el=(tag,attrs)=>{const node=document.createElementNS(ns,tag);Object.entries(attrs).forEach(([k,v])=>node.setAttribute(k,v));svg.appendChild(node);return node};
  const arm=[['#4e7189',20],['#6f98ae',16],['#385a6d',10]].map(([stroke,width])=>el('polyline',{fill:'none',stroke,'stroke-width':width,'stroke-linecap':'round'}));
  const palm=el('polygon',{fill:'rgba(112,146,164,.84)',stroke:'#c2d9e5','stroke-width':3});
+ const palmFibre=el('polyline',{fill:'none',stroke:'#29c4d7','stroke-width':5,'stroke-linecap':'round'});
  const fingers=Array.from({length:5},()=>el('polyline',{fill:'none',stroke:'#d8e7ef','stroke-width':8,'stroke-linecap':'round','stroke-linejoin':'round'}));
  const fibres=Array.from({length:5},()=>el('polyline',{fill:'none',stroke:'#29c4d7','stroke-width':5,'stroke-linecap':'round'}));
  const can=el('rect',{fill:'#c33237',stroke:'#e8eff4','stroke-width':3,rx:12});
  const ring=el('line',{stroke:'#f6d365','stroke-width':4,'stroke-linecap':'round'});
  const text=el('text',{x:500,y:46,fill:'#eff8ff','font-size':20,'font-weight':'700','text-anchor':'middle'});
- function draw(t){const s={arm:mix(cfg.previous.arm,cfg.current.arm,t),palm:mix(cfg.previous.palm,cfg.current.palm,t),fingers:mix(cfg.previous.fingers,cfg.current.fingers,t),fibres:mix(cfg.previous.fibres,cfg.current.fibres,t),can:mix(cfg.previous.can,cfg.current.can,t),grasped:t<.5?cfg.previous.grasped:cfg.current.grasped};
+ function draw(t){const s={arm:mix(cfg.previous.arm,cfg.current.arm,t),palm:mix(cfg.previous.palm,cfg.current.palm,t),palmFibre:mix(cfg.previous.palmFibre,cfg.current.palmFibre,t),fingers:mix(cfg.previous.fingers,cfg.current.fingers,t),fibres:mix(cfg.previous.fibres,cfg.current.fibres,t),can:mix(cfg.previous.can,cfg.current.can,t),grasped:t<.5?cfg.previous.grasped:cfg.current.grasped,contacts:t<.5?cfg.previous.contacts:cfg.current.contacts};
   arm.forEach((node,i)=>node.setAttribute('points',[s.arm[i],s.arm[i+1]].map(xy).join(' ')));
-  palm.setAttribute('points',s.palm.map(xy).join(' ')); fingers.forEach((node,i)=>node.setAttribute('points',s.fingers[i].map(xy).join(' '))); fibres.forEach((node,i)=>node.setAttribute('points',s.fibres[i].map(xy).join(' ')));
-  const w=.42*scale,h=.74*scale,x=ox+scale*s.can[0]-w/2,y=oy-scale*s.can[1]-h/2;can.setAttribute('x',x);can.setAttribute('y',y);can.setAttribute('width',w);can.setAttribute('height',h);ring.setAttribute('x1',x+w*.32);ring.setAttribute('x2',x+w*.68);ring.setAttribute('y1',y+12);ring.setAttribute('y2',y+12);text.textContent=s.grasped?'二维 FBG 已抓稳 · 正在搬运':'二维寻找与对准 · 物体保持原位';}
- const started=performance.now(),duration=900; function animate(now){const t=Math.min(1,(now-started)/duration),e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;draw(e);if(t<1)requestAnimationFrame(animate)} draw(0);requestAnimationFrame(animate);
+  palm.setAttribute('points',s.palm.map(xy).join(' ')); palmFibre.setAttribute('points',s.palmFibre.map(xy).join(' '));
+  fingers.forEach((node,i)=>{node.setAttribute('points',s.fingers[i].map(xy).join(' '));node.setAttribute('stroke',s.contacts.includes(i)?'#ffcc66':'#d8e7ef');});
+  fibres.forEach((node,i)=>{node.setAttribute('points',s.fibres[i].map(xy).join(' '));node.setAttribute('stroke',s.contacts.includes(i)?'#ffe06a':'#29c4d7');});
+  const w=.48*scale,h=.74*scale,x=ox+scale*s.can[0]-w/2,y=oy-scale*s.can[1]-h/2;can.setAttribute('x',x);can.setAttribute('y',y);can.setAttribute('width',w);can.setAttribute('height',h);ring.setAttribute('x1',x+w*.32);ring.setAttribute('x2',x+w*.68);ring.setAttribute('y1',y+12);ring.setAttribute('y2',y+12);text.textContent=s.grasped?'二维 FBG 已抓稳 · 正在搬运':'二维寻找与对准 · 物体保持原位';}
+ if(cfg.animate){const started=performance.now(),duration=520; function animate(now){const t=Math.min(1,(now-started)/duration),e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;draw(e);if(t<1)requestAnimationFrame(animate)} draw(0);requestAnimationFrame(animate);}else{draw(1);}
 })();
 </script>'''
     return html.replace("__CONFIG__", config)
-
-
-def _arm_joint_coordinates_from_angles(angles_deg: tuple[float, float, float]) -> np.ndarray:
-    """Return planar arm coordinates from independently controlled joint angles."""
-    angles = np.deg2rad(angles_deg)
-    lengths = (3.5, 3.0, 1.25)
-    points = [np.array([0.0, 0.0])]
-    direction = 0.0
-    for length, angle in zip(lengths, angles):
-        direction += angle
-        points.append(points[-1] + length * np.array([np.cos(direction), np.sin(direction)]))
-    return np.asarray(points)
-
-
-def evaluate_can_grasp(pose: dict, can_center: np.ndarray, can_radius: float = .52, contact_margin: float = .42) -> dict:
-    """Evaluate teaching-level fingertip contacts around a cylindrical beverage can."""
-    can_center = np.asarray(can_center, dtype=float)
-    fingers = pose["fingers"]
-    distances = np.asarray([np.linalg.norm(np.asarray(finger)[-1] - can_center) for finger in fingers])
-    contact_fingers = [index for index, distance in enumerate(distances) if distance <= can_radius + contact_margin]
-    curl_mean = float(np.mean(np.asarray(pose["finger_curls_deg"])))
-    non_thumb_contacts = [index for index in contact_fingers if index != 0]
-    is_grasped = 0 in contact_fingers and len(non_thumb_contacts) >= 2 and curl_mean >= 35.0
-    stability = min(1.0, .16 * len(contact_fingers) + .004 * curl_mean)
-    return {"contact_fingers": contact_fingers, "tip_distances": distances, "stability": stability, "is_grasped": is_grasped}
-
-
-def can_offset_from_target(pose: dict, can_center: np.ndarray) -> np.ndarray:
-    """Express the can displacement from the default target in hand-local axes."""
-    joints = np.asarray(pose["arm_joints"], dtype=float)
-    forward = joints[3] - joints[2]
-    forward /= np.linalg.norm(forward)
-    lateral = np.array([-forward[1], forward[0]])
-    displacement = np.asarray(can_center, dtype=float) - np.asarray(pose["target"], dtype=float)
-    return np.array([np.dot(displacement, forward), np.dot(displacement, lateral)])
 
 
 def _can_mesh(can_center: np.ndarray, radius: float = .52, height: float = 1.75, sides: int = 24) -> tuple[np.ndarray, list[int], list[int], list[int]]:
@@ -731,13 +763,13 @@ def _arched_palm_mesh(center: np.ndarray, forward_2d: np.ndarray, rings: int = 8
 
 def arm_figure(action: str, route: str, finger_angle_deg: float, contact_force_n: float, joint_angles_deg: tuple[float, float, float] | None = None, finger_curls_deg: tuple[float, float, float, float, float] | None = None, wrist_rotation_deg: float = 0.0, can_center: np.ndarray | None = None) -> go.Figure:
     """Draw a five-finger teaching hand whose parts follow the selected action."""
-    pose = dexterous_hand_pose(action, joint_angles_deg, finger_curls_deg, wrist_rotation_deg)
+    pose = models.dexterous_hand_pose(action, joint_angles_deg, finger_curls_deg, wrist_rotation_deg)
     joints = np.asarray(pose["arm_joints"])
     palm_outline = np.asarray(pose["palm_outline"])
     target = np.asarray(pose["target"] if can_center is None else can_center)
     fingers = pose["fingers"]
     fiber_routes = pose["fiber_routes"]
-    grasp = evaluate_can_grasp(pose, target)
+    grasp = models.evaluate_can_grasp(pose, target)
     figure = go.Figure()
     # 以不同长度和厚度绘制上臂、前臂与腕部，避免一条等粗折线破坏手臂比例。
     for name, start, end, width, color in (
@@ -753,7 +785,7 @@ def arm_figure(action: str, route: str, finger_angle_deg: float, contact_force_n
         figure.add_scatter(x=finger[:, 0], y=finger[:, 1], mode="lines+markers", name=f"手指 {index}", line={"width": 8, "color": "#ffcc66" if contact else "#d8e7ef"}, marker={"size": 7, "color": "#ff8a4c" if contact else "#506d80"}, hovertemplate=f"手指 {index}<extra></extra>")
         fiber_width = 5 if route in {"手指背侧", "指尖"} else 3
         figure.add_scatter(x=fiber[:, 0], y=fiber[:, 1], mode="lines+markers", name=f"FBG 支路 {index}", line={"width": fiber_width, "color": "#ffe06a" if contact else "#29c4d7"}, marker={"size": 5, "color": "#fff2aa" if contact else "#75eef5"}, hovertemplate=f"FBG 支路 {index}<extra></extra>")
-    can_radius, can_height = .21, .74
+    can_radius, can_height = .24, .74
     figure.add_scatter(x=[target[0] - can_radius, target[0] + can_radius, target[0] + can_radius, target[0] - can_radius, target[0] - can_radius], y=[target[1] - can_height / 2, target[1] - can_height / 2, target[1] + can_height / 2, target[1] + can_height / 2, target[1] - can_height / 2], mode="lines", fill="toself", name="铝制饮料罐", line={"color":"#d7e0e8","width":3}, fillcolor="rgba(195, 50, 55, .92)")
     figure.add_scatter(x=[target[0] - .20, target[0] + .20], y=[target[1] + can_height / 2 - .10, target[1] + can_height / 2 - .10], mode="lines", name="拉环", line={"color":"#f6d365","width":4}, hovertemplate="饮料罐拉环<extra></extra>")
     annotation_y = max(joints[:, 1].max(), target[1], palm_outline[:, 1].max()) + .65
@@ -764,98 +796,15 @@ def arm_figure(action: str, route: str, finger_angle_deg: float, contact_force_n
     return figure
 
 
-def planar_hand_transition_figure(
-    previous_pose: dict,
-    current_pose: dict,
-    previous_can_center: np.ndarray,
-    current_can_center: np.ndarray,
-    previous_grasped: bool,
-    current_grasped: bool,
-) -> go.Figure:
-    """Create a native Plotly animation, avoiding a remounted HTML document."""
-    def blend(start: np.ndarray, end: np.ndarray, amount: float) -> np.ndarray:
-        return (1.0 - amount) * np.asarray(start, dtype=float) + amount * np.asarray(end, dtype=float)
-
-    def traces(amount: float) -> list[go.Scatter]:
-        arm = blend(previous_pose["arm_joints"], current_pose["arm_joints"], amount)
-        palm = blend(previous_pose["palm_outline"], current_pose["palm_outline"], amount)
-        palm_fibre = blend(previous_pose["palm_fiber_route"], current_pose["palm_fiber_route"], amount)
-        fingers = [blend(before, after, amount) for before, after in zip(previous_pose["fingers"], current_pose["fingers"])]
-        fibres = [blend(before, after, amount) for before, after in zip(previous_pose["fiber_routes"], current_pose["fiber_routes"])]
-        can = blend(previous_can_center, current_can_center, amount)
-        grasped = current_grasped if amount >= .5 else previous_grasped
-        scene: list[go.Scatter] = []
-        for name, start, end, width, color in (
-            ("上臂", arm[0], arm[1], 20, "#4e7189"),
-            ("前臂", arm[1], arm[2], 16, "#6f98ae"),
-            ("腕部", arm[2], arm[3], 10, "#385a6d"),
-        ):
-            scene.append(go.Scatter(x=[start[0], end[0]], y=[start[1], end[1]], mode="lines+markers", name=name, line={"width": width, "color": color}, marker={"size": max(9, width - 6), "color": "#d8e7ef"}))
-        scene.append(go.Scatter(x=palm[:, 0], y=palm[:, 1], mode="lines", fill="toself", name="掌壳", line={"width": 3, "color": "#9db7c7"}, fillcolor="rgba(112,146,164,.82)"))
-        scene.append(go.Scatter(x=palm_fibre[:, 0], y=palm_fibre[:, 1], mode="lines+markers", name="掌心 FBG", line={"width": 5, "color": "#29c4d7"}, marker={"size": 5, "color": "#75eef5"}))
-        for index, (finger, fibre) in enumerate(zip(fingers, fibres), 1):
-            active = grasped and index in (1, 2, 3, 4)
-            scene.append(go.Scatter(x=finger[:, 0], y=finger[:, 1], mode="lines+markers", name=f"手指 {index}", line={"width": 8, "color": "#ffcc66" if active else "#d8e7ef"}, marker={"size": 7, "color": "#ff8a4c" if active else "#506d80"}))
-            scene.append(go.Scatter(x=fibre[:, 0], y=fibre[:, 1], mode="lines", name=f"FBG 支路 {index}", line={"width": 5, "color": "#ffe06a" if active else "#29c4d7"}))
-        radius, height = .21, .74
-        scene.append(go.Scatter(x=[can[0] - radius, can[0] + radius, can[0] + radius, can[0] - radius, can[0] - radius], y=[can[1] - height / 2, can[1] - height / 2, can[1] + height / 2, can[1] + height / 2, can[1] - height / 2], mode="lines", fill="toself", name="铝制饮料罐", line={"color": "#e8eff4", "width": 3}, fillcolor="rgba(195,50,55,.92)"))
-        return scene
-
-    all_points = np.vstack([
-        np.asarray(previous_pose["arm_joints"]), np.asarray(current_pose["arm_joints"]),
-        np.asarray(previous_pose["palm_outline"]), np.asarray(current_pose["palm_outline"]),
-        np.asarray(previous_pose["palm_fiber_route"]), np.asarray(current_pose["palm_fiber_route"]),
-        np.asarray(previous_can_center), np.asarray(current_can_center),
-    ])
-    center = (all_points.min(axis=0) + all_points.max(axis=0)) / 2
-    figure = go.Figure(data=traces(0.0), frames=[go.Frame(data=traces(amount), name=str(index)) for index, amount in enumerate(np.linspace(0.0, 1.0, 13))])
-    figure.update_layout(
-        template="plotly_dark", height=620, showlegend=False,
-        xaxis={"visible": False, "range": [center[0] - 6.0, center[0] + 6.0]},
-        yaxis={"visible": False, "range": [center[1] - 4.5, center[1] + 4.5], "scaleanchor": "x", "scaleratio": 1},
-        margin={"l": 8, "r": 8, "t": 42, "b": 8},
-        title="二维抓取连续动画（点击播放）",
-        updatemenus=[{"type": "buttons", "showactive": False, "x": .5, "xanchor": "center", "y": 1.08, "yanchor": "top", "buttons": [{"label": "播放本步骤动画", "method": "animate", "args": [None, {"frame": {"duration": 75, "redraw": True}, "transition": {"duration": 0}, "fromcurrent": True}]}]}],
-    )
-    return figure
-
-
-def planar_hand_snapshot_svg(pose: dict, can_center: np.ndarray, grasped: bool) -> str:
-    """Return a script-free SVG frame for the non-moving planar search step."""
-    joints = np.asarray(pose["arm_joints"], dtype=float)
-    palm = np.asarray(pose["palm_outline"], dtype=float)
-    can = np.asarray(can_center, dtype=float)
-    points = np.vstack([joints, palm, *pose["fingers"], can])
-    center = (points.min(axis=0) + points.max(axis=0)) / 2
-    scale, offset_x, offset_y = min(900 / 12, 500 / 9), 500 - 900 / 12 * center[0], 325 + 500 / 9 * center[1]
-
-    def xy(point: np.ndarray) -> str:
-        return f"{offset_x + scale * point[0]:.2f},{offset_y - scale * point[1]:.2f}"
-
-    def polyline(points: np.ndarray) -> str:
-        return " ".join(xy(point) for point in np.asarray(points, dtype=float))
-
-    arm = "".join(
-        f'<polyline points="{polyline([start, end])}" fill="none" stroke="{color}" stroke-width="{width}" stroke-linecap="round"/>'
-        for start, end, width, color in ((joints[0], joints[1], 20, "#4e7189"), (joints[1], joints[2], 16, "#6f98ae"), (joints[2], joints[3], 10, "#385a6d"))
-    )
-    fingers = "".join(
-        f'<polyline points="{polyline(finger)}" fill="none" stroke="{"#ffcc66" if grasped else "#d8e7ef"}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><polyline points="{polyline(fibre)}" fill="none" stroke="{"#ffe06a" if grasped else "#29c4d7"}" stroke-width="5" stroke-linecap="round"/>'
-        for finger, fibre in zip(pose["fingers"], pose["fiber_routes"])
-    )
-    can_x, can_y = offset_x + scale * (can[0] - .21), offset_y - scale * (can[1] + .37)
-    return f'<div style="height:620px;border-radius:18px;overflow:hidden;background:linear-gradient(135deg,#0b1119,#152938)"><svg viewBox="0 0 1000 620" width="100%" height="620" aria-label="二维寻找目标姿态"><text x="500" y="42" fill="#eff8ff" font-size="20" font-weight="700" text-anchor="middle">二维寻找目标：物体保持原位</text>{arm}<polygon points="{polyline(palm)}" fill="#7092a4" fill-opacity=".85" stroke="#c2d9e5" stroke-width="3"/>{fingers}<rect x="{can_x:.2f}" y="{can_y:.2f}" width="{.42 * scale:.2f}" height="{.74 * scale:.2f}" rx="12" fill="#c33237" stroke="#e8eff4" stroke-width="3"/></svg></div>'
-
-
 def arm_3d_figure(action: str, route: str, finger_angle_deg: float, joint_angles_deg: tuple[float, float, float] | None = None, finger_curls_deg: tuple[float, float, float, float, float] | None = None, wrist_rotation_deg: float = 0.0, can_center: np.ndarray | None = None) -> go.Figure:
     """Render a rotatable 3D teaching view of the current arm action."""
-    pose = dexterous_hand_pose(action, joint_angles_deg, finger_curls_deg, wrist_rotation_deg)
+    pose = models.dexterous_hand_pose(action, joint_angles_deg, finger_curls_deg, wrist_rotation_deg)
     planar_joints = np.asarray(pose["arm_joints"])
     joints = np.column_stack([planar_joints[:, 0], [0.0, .12, .26, .38], planar_joints[:, 1]])
     fingers = pose["fingers"]
     fiber_routes = pose["fiber_routes"]
     target = np.asarray(pose["target"] if can_center is None else can_center)
-    grasp = evaluate_can_grasp(pose, target)
+    grasp = models.evaluate_can_grasp(pose, target)
     forward_2d = planar_joints[3] - planar_joints[2]
     forward_2d /= np.linalg.norm(forward_2d)
     palm_vertices, palm_i, palm_j, palm_k = _arched_palm_mesh(np.asarray(pose["palm_center"]), forward_2d)
@@ -898,7 +847,7 @@ def arm_3d_figure(action: str, route: str, finger_angle_deg: float, joint_angles
     return figure
 
 
-def anthropomorphic_hand_html(action: str, joint_angles_deg: tuple[float, float, float], finger_curls_deg: tuple[float, float, float, float, float], grasped: bool, can_offset: tuple[float, float, float] = (0.0, 0.0, 0.0), previous_can_offset: tuple[float, float, float] | None = None, shoulder_offset: tuple[float, float, float] = (0.0, 0.0, 0.0), previous_shoulder_offset: tuple[float, float, float] | None = None, planar_pose: dict | None = None, can_center: np.ndarray | None = None, previous_can_center: np.ndarray | None = None, can_depth: float = 0.0, previous_can_depth: float | None = None, finger_curl_gain: float = 1.0, finger_joint_angles_deg: tuple[tuple[float, ...], ...] | None = None, previous_joint_angles_deg: tuple[float, float, float] | None = None, previous_finger_joint_angles_deg: tuple[tuple[float, ...], ...] | None = None) -> str:
+def anthropomorphic_hand_html(action: str, joint_angles_deg: tuple[float, float, float], finger_curls_deg: tuple[float, float, float, float, float], grasped: bool, can_offset: tuple[float, float, float] = (0.0, 0.0, 0.0), previous_can_offset: tuple[float, float, float] | None = None, shoulder_offset: tuple[float, float, float] = (0.0, 0.0, 0.0), previous_shoulder_offset: tuple[float, float, float] | None = None, planar_pose: dict | None = None, can_center: np.ndarray | None = None, previous_can_center: np.ndarray | None = None, can_depth: float = 0.0, previous_can_depth: float | None = None, finger_curl_gain: float = 1.0, finger_joint_angles_deg: tuple[tuple[float, ...], ...] | None = None, previous_joint_angles_deg: tuple[float, float, float] | None = None, previous_finger_joint_angles_deg: tuple[tuple[float, ...], ...] | None = None, animate: bool = True) -> str:
     """Return a self-contained Three.js teaching renderer for a rounded five-finger robot hand."""
     def three_axis_offset(offset: tuple[float, ...]) -> tuple[float, float, float]:
         values = tuple(float(value) for value in offset)
@@ -907,7 +856,7 @@ def anthropomorphic_hand_html(action: str, joint_angles_deg: tuple[float, float,
     can_offset = three_axis_offset(can_offset)
     previous_can_offset = can_offset if previous_can_offset is None else three_axis_offset(previous_can_offset)
     previous_shoulder_offset = shoulder_offset if previous_shoulder_offset is None else previous_shoulder_offset
-    planar_pose = planar_pose or dexterous_hand_pose(action, joint_angles_deg, finger_curls_deg)
+    planar_pose = planar_pose or models.dexterous_hand_pose(action, joint_angles_deg, finger_curls_deg)
     shared_geometry = {
         "armJoints": np.asarray(planar_pose["arm_joints"], dtype=float).tolist(),
         "palmOutline": np.asarray(planar_pose["palm_outline"], dtype=float).tolist(),
@@ -931,17 +880,48 @@ def anthropomorphic_hand_html(action: str, joint_angles_deg: tuple[float, float,
     if len(previous_joint_angles_deg) != 3 or len(previous_finger_joint_angles_deg) != 5 or any(len(angles) != count for angles, count in zip(previous_finger_joint_angles_deg, joint_counts)):
         raise ValueError("上一帧必须包含三个手臂关节和 14 个手指关节")
     finger_joints = [list(map(float, angles)) for angles in finger_joint_angles_deg]
-    config = json.dumps({"action": action, "joints": list(joint_angles_deg), "previousJoints": list(previous_joint_angles_deg), "curls": list(finger_curls_deg), "curlGain": float(finger_curl_gain), "fingerJoints": finger_joints, "previousFingerJoints": [list(map(float, angles)) for angles in previous_finger_joint_angles_deg], "grasped": grasped, "canOffset": list(can_offset), "previousCanOffset": list(previous_can_offset), "shoulderOffset": list(shoulder_offset), "previousShoulderOffset": list(previous_shoulder_offset), "sharedGeometry": shared_geometry, "canPosition": can_center.tolist(), "previousCanPosition": previous_can_center.tolist(), "canDepth": float(can_depth), "previousCanDepth": float(previous_can_depth)}, ensure_ascii=False)
+
+    def serialise_capsules(spec: list[tuple[np.ndarray, np.ndarray, float]]) -> list[list[object]]:
+        return [
+            [start.tolist(), end.tolist(), float(radius)]
+            for start, end, radius in spec
+        ]
+
+    capsules = models.three_d_finger_capsules(finger_joint_angles_deg)
+    previous_capsules = models.three_d_finger_capsules(previous_finger_joint_angles_deg)
+    config = json.dumps({
+        "action": action,
+        "joints": list(joint_angles_deg),
+        "previousJoints": list(previous_joint_angles_deg),
+        "curls": list(finger_curls_deg),
+        "curlGain": float(finger_curl_gain),
+        "fingerJoints": finger_joints,
+        "previousFingerJoints": [list(map(float, angles)) for angles in previous_finger_joint_angles_deg],
+        "fingerCapsules": [serialise_capsules(finger) for finger in capsules],
+        "previousFingerCapsules": [serialise_capsules(finger) for finger in previous_capsules],
+        "grasped": grasped,
+        "canOffset": list(can_offset),
+        "previousCanOffset": list(previous_can_offset),
+        "shoulderOffset": list(shoulder_offset),
+        "previousShoulderOffset": list(previous_shoulder_offset),
+        "sharedGeometry": shared_geometry,
+        "canPosition": can_center.tolist(),
+        "previousCanPosition": previous_can_center.tolist(),
+        "canDepth": float(can_depth),
+        "previousCanDepth": float(previous_can_depth),
+        "animate": bool(animate),
+    }, ensure_ascii=False)
     three_runtime = (Path(__file__).with_name("vendor") / "three.min.js").read_text(encoding="utf-8")
     html = r'''<div id="bio-hand" style="height:640px;border-radius:18px;overflow:hidden;background:linear-gradient(135deg,#0b1119,#152938);position:relative"></div>
 <script>__THREE_RUNTIME__</script>
 <script>
 (() => {
  const cfg=__CONFIG__, host=document.getElementById('bio-hand');
- const scene=new THREE.Scene(), camera=new THREE.PerspectiveCamera(36,host.clientWidth/host.clientHeight,.1,100);
- const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true}); renderer.setSize(host.clientWidth,host.clientHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,2)); host.appendChild(renderer.domElement);
+ const viewW=Math.max(host.clientWidth,300),viewH=Math.max(host.clientHeight,300);
+ const scene=new THREE.Scene(), camera=new THREE.PerspectiveCamera(36,viewW/viewH,.1,100);
+ const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true}); renderer.setSize(viewW,viewH); renderer.setPixelRatio(Math.min(devicePixelRatio,2)); host.appendChild(renderer.domElement);
  scene.add(new THREE.HemisphereLight(0xe8f5ff,0x15222e,2.3)); const key=new THREE.DirectionalLight(0xffffff,2.4); key.position.set(4,-3,7); scene.add(key);
- const robot=new THREE.Group(); scene.add(robot); scene.add(new THREE.AxesHelper(2.0)); const grid=new THREE.GridHelper(24,24,0x315366,0x193140); grid.rotation.x=Math.PI/2; scene.add(grid); const hand=new THREE.Group();
+ const robot=new THREE.Group(); scene.add(robot); scene.add(new THREE.AxesHelper(2.0)); const grid=new THREE.GridHelper(16,16,0x315366,0x193140); scene.add(grid); const hand=new THREE.Group();
  const shoulderStart=new THREE.Vector3(-6.7+cfg.previousShoulderOffset[0],-1.8+cfg.previousShoulderOffset[1],cfg.previousShoulderOffset[2]),shoulderTarget=new THREE.Vector3(-6.7+cfg.shoulderOffset[0],-1.8+cfg.shoulderOffset[1],cfg.shoulderOffset[2]);
  const metal=new THREE.MeshStandardMaterial({color:0x6d9bb5,metalness:.75,roughness:.28}); const joint=new THREE.MeshStandardMaterial({color:0x2e5268,metalness:.7,roughness:.25}); const skin=new THREE.MeshStandardMaterial({color:0xa5c8d9,metalness:.35,roughness:.48}); const cyan=new THREE.MeshStandardMaterial({color:0x23d5e8,emissive:0x087482,emissiveIntensity:.65});
  // 掌心轮廓：圆润的虎口、收窄腕部和拱起的掌背，不使用球体或平板。
@@ -951,22 +931,30 @@ def anthropomorphic_hand_html(action: str, joint_angles_deg: tuple[float, float,
  const cuff=new THREE.Mesh(new THREE.CapsuleGeometry(.38,.50,8,16),joint); cuff.rotation.y=Math.PI/2; cuff.position.set(-1.35,0,0); hand.add(cuff);
  const hub=new THREE.Mesh(new THREE.TorusGeometry(.34,.10,10,22),joint); hub.rotation.y=Math.PI/2; hub.position.set(-1.03,0,0); hand.add(hub);
  // 三段机器人手臂与二维图共用同一运动学：每一段按肩、肘、腕角依次累积旋转。
- const armPivots=[],fingerPivots=[];
+ const armPivots=[];
  function makeArm(){ const a=cfg.joints.map(v=>v*Math.PI/180), shoulder=new THREE.Group(); shoulder.position.copy(shoulderStart); robot.add(shoulder); let pivot=shoulder; const links=[[6.3,.43,0x4f7690],[5.4,.37,0x638ba2],[2.25,.30,0x36586c]]; links.forEach((item,n)=>{ armPivots.push(pivot); pivot.rotation.z=a[n]; const link=new THREE.Mesh(new THREE.CapsuleGeometry(item[1],item[0]-item[1]*2,8,16),new THREE.MeshStandardMaterial({color:item[2],metalness:.78,roughness:.26})); link.rotation.z=-Math.PI/2; link.position.x=item[0]/2; pivot.add(link); const armFiber=new THREE.Mesh(new THREE.CapsuleGeometry(.026,Math.max(.1,item[0]-.12),5,8),cyan); armFiber.rotation.z=-Math.PI/2; armFiber.position.set(item[0]/2,0,item[1]*.94); pivot.add(armFiber); const next=new THREE.Group(); next.position.x=item[0]; pivot.add(next); if(n<2){ const jointDisc=new THREE.Mesh(new THREE.TorusGeometry(item[1]*1.05,.075,8,18),joint); jointDisc.rotation.y=Math.PI/2; jointDisc.position.x=item[0]; pivot.add(jointDisc); } pivot=next; }); pivot.add(hand); return shoulder; } const shoulder=makeArm(); armPivots.forEach((pivot,index)=>pivot.rotation.z=cfg.previousJoints[index]*Math.PI/180);
- function makeFinger(base,lengths,jointAngles,spread,thumb){const root=new THREE.Group();root.position.set(...base);root.rotation.z=spread;if(thumb){root.rotateY(-jointAngles[0]*Math.PI/180);}else{root.rotateY(-jointAngles[0]*Math.PI/180);}hand.add(root);let pivot=root;const bends=[root],radii=thumb?[.19,.16,.13]:[.17,.145,.12],knuckle=new THREE.Mesh(new THREE.SphereGeometry(radii[0]*1.18,12,12),joint);knuckle.position.set(...base);hand.add(knuckle);lengths.forEach((len,n)=>{if(n){bends.push(pivot);if(thumb){pivot.rotation.z=jointAngles[n]*Math.PI/180;}else{pivot.rotation.y=-jointAngles[n]*Math.PI/180;}}const bone=new THREE.Mesh(new THREE.CapsuleGeometry(radii[n],Math.max(.12,len-radii[n]*2),8,14),skin);bone.rotation.z=-Math.PI/2;bone.position.x=len/2;pivot.add(bone);const segmentFiber=new THREE.Mesh(new THREE.CapsuleGeometry(.025,Math.max(.1,len-.08),5,8),cyan);segmentFiber.rotation.z=-Math.PI/2;segmentFiber.position.set(len/2,0,radii[n]*.94);pivot.add(segmentFiber);const ring=new THREE.Mesh(new THREE.TorusGeometry(radii[n]*1.04,.035,8,16),joint);ring.rotation.y=Math.PI/2;ring.position.x=len;pivot.add(ring);const next=new THREE.Group();next.position.x=len;pivot.add(next);pivot=next;});fingerPivots.push(bends);}
- const fj=cfg.fingerJoints; makeFinger([.18,-.98,.04],[1.31,.85],fj[0],-.83,true); makeFinger([.92,-.56,.08],[1.384,1.0,.72],fj[1],-.09,false); makeFinger([1.04,-.18,.10],[1.512,1.072,.768],fj[2],-.03,false); makeFinger([.98,.23,.08],[1.36,.976,.688],fj[3],.05,false); makeFinger([.84,.59,.02],[1.104,.768,.56],fj[4],.15,false); fingerPivots.forEach((finger,index)=>finger.forEach((pivot,jointIndex)=>{if(index===0&&jointIndex===1){pivot.rotation.z=cfg.previousFingerJoints[index][jointIndex]*Math.PI/180;}else{pivot.rotation.y=-cfg.previousFingerJoints[index][jointIndex]*Math.PI/180;}}));
- const graspFrame=new THREE.Group(); graspFrame.position.set(.30,-.20,.76); hand.add(graspFrame); const originalShoulder=shoulder.position.clone(); shoulder.position.set(-6.7,-1.8,0); scene.updateMatrixWorld(true); const canStart=new THREE.Vector3(); graspFrame.getWorldPosition(canStart); canStart.add(new THREE.Vector3(cfg.canOffset[0],cfg.canOffset[1],cfg.canOffset[2])); shoulder.position.copy(originalShoulder); const can=new THREE.Mesh(new THREE.CylinderGeometry(.48,.48,1.72,32),new THREE.MeshStandardMaterial({color:0xc94d4f,metalness:.65,roughness:.25})); can.visible=true; if(cfg.grasped){can.position.set(.30,-.20,.76);hand.add(can);}else{can.position.copy(canStart);robot.add(can);}
- camera.position.set(16,-18,14); camera.lookAt(new THREE.Vector3(1,0,0));
- const floor=new THREE.Mesh(new THREE.CircleGeometry(9,48),new THREE.MeshStandardMaterial({color:0x102331,roughness:.82})); floor.rotation.x=-Math.PI/2; floor.position.y=-1.65; scene.add(floor);
+ // 手指几何由 Python 端按同一套运动学计算并序列化，JS 只负责渲染与插值。
+ const fingerMeshes=[];
+ function makeFingerFromData(caps){const knuckle=new THREE.Mesh(new THREE.SphereGeometry(caps[0][2]*1.18,12,12),joint);knuckle.position.set(...caps[0][0]);hand.add(knuckle);const bones=[],fibres=[],rings=[];caps.forEach(cap=>{const r=cap[2],p1=new THREE.Vector3(...cap[0]),p2=new THREE.Vector3(...cap[1]);const len=p1.distanceTo(p2),mid=p1.clone().add(p2).multiplyScalar(.5),dir=p2.clone().sub(p1).normalize();const bone=new THREE.Mesh(new THREE.CapsuleGeometry(r,Math.max(.12,len-r*2),8,14),skin);bone.position.copy(mid);bone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir);hand.add(bone);bones.push(bone);const segmentFiber=new THREE.Mesh(new THREE.CapsuleGeometry(.025,Math.max(.1,len-.08),5,8),cyan);segmentFiber.position.copy(mid);segmentFiber.position.z+=r*.94;segmentFiber.quaternion.copy(bone.quaternion);hand.add(segmentFiber);fibres.push(segmentFiber);const ring=new THREE.Mesh(new THREE.TorusGeometry(r*1.04,.035,8,16),joint);ring.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),dir);ring.position.copy(p2);hand.add(ring);rings.push(ring);});fingerMeshes.push({bones,fibres,rings,knuckle});}
+ function applyFingerData(finger,prevCaps,currCaps,t){finger.bones.forEach((bone,si)=>{const p1=new THREE.Vector3().lerpVectors(new THREE.Vector3(...prevCaps[si][0]),new THREE.Vector3(...currCaps[si][0]),t);const p2=new THREE.Vector3().lerpVectors(new THREE.Vector3(...prevCaps[si][1]),new THREE.Vector3(...currCaps[si][1]),t);const len=p1.distanceTo(p2),mid=p1.clone().add(p2).multiplyScalar(.5),dir=p2.clone().sub(p1).normalize();bone.position.copy(mid);bone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir);finger.fibres[si].position.copy(mid);finger.fibres[si].position.z+=prevCaps[si][2]*.94;finger.fibres[si].quaternion.copy(bone.quaternion);finger.rings[si].position.copy(p2);finger.rings[si].quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),dir);});finger.knuckle.position.copy(new THREE.Vector3().lerpVectors(new THREE.Vector3(...prevCaps[0][0]),new THREE.Vector3(...currCaps[0][0]),t));}
+ cfg.fingerCapsules.forEach(caps=>makeFingerFromData(caps)); fingerMeshes.forEach((finger,index)=>applyFingerData(finger,cfg.previousFingerCapsules[index],cfg.fingerCapsules[index],0));
+ // 把机器人整体平移，使默认抓取位对准坐标系原点：罐子放在滑杆对应的 (X,Y,Z) 上，
+ // 手部通过 reach 从原点出发去找它，抓取前罐子保持世界位置不动。
+ const graspFrame=new THREE.Group(); graspFrame.position.set(.30,-.20,.76); hand.add(graspFrame); const originalShoulder=shoulder.position.clone(); shoulder.position.set(-6.7,-1.8,0); scene.updateMatrixWorld(true); const canStart=new THREE.Vector3(); graspFrame.getWorldPosition(canStart); shoulder.position.copy(originalShoulder); robot.position.sub(canStart); scene.updateMatrixWorld(true); const can=new THREE.Mesh(new THREE.CylinderGeometry(.48,.48,1.72,32),new THREE.MeshStandardMaterial({color:0xc94d4f,metalness:.65,roughness:.25})); can.visible=true; if(cfg.grasped){can.position.set(.30,-.20,.76);hand.add(can);}else{can.position.set(cfg.canOffset[0]+canStart.x,cfg.canOffset[1]+canStart.y,cfg.canOffset[2]+canStart.z);robot.add(can);}
+ // 相机按机器人包围盒自动取景：距离随整体尺寸缩放，交互只保留拖动旋转。
+ camera.position.set(16,-18,14); const frameBox=new THREE.Box3().setFromObject(robot),viewCenter=frameBox.getCenter(new THREE.Vector3()),viewRadius=Math.max(frameBox.getSize(new THREE.Vector3()).length()/2,1e-3),viewDistance=viewRadius/Math.sin(THREE.MathUtils.degToRad(camera.fov/2))*1.2; camera.position.copy(new THREE.Vector3(16,-18,14).normalize().multiplyScalar(viewDistance).add(viewCenter)); camera.lookAt(viewCenter);
+ // 相机固定取景整个工作空间（覆盖物块 ±3 与手部活动范围），镜头不跟随手部。
+ function frameCamera(){const b=new THREE.Box3(new THREE.Vector3(-16,-5,-4),new THREE.Vector3(4,3,4)),c=b.getCenter(new THREE.Vector3()),r=Math.max(b.getSize(new THREE.Vector3()).length()/2,1e-3),d=r/Math.sin(THREE.MathUtils.degToRad(camera.fov/2))*1.2;camera.position.copy(new THREE.Vector3(16,-18,14).normalize().multiplyScalar(d).add(c));camera.lookAt(c);}
  const label=document.createElement('div'); label.textContent='当前动作：'+cfg.action+' · 仿生五指机器人手 · 拖动旋转'; label.style.cssText='position:absolute;left:18px;bottom:14px;color:#d8f2ff;font:600 14px sans-serif;background:#132a3baa;padding:8px 11px;border-radius:9px'; host.appendChild(label);
  // Orbit-like interaction without external controls.
  let drag=false,last; host.addEventListener('pointerdown',e=>{drag=true;last=e;}); addEventListener('pointerup',()=>drag=false); addEventListener('pointermove',e=>{if(!drag)return;robot.rotation.y+=(e.clientX-last.clientX)*.01;robot.rotation.x+=(e.clientY-last.clientY)*.01;last=e;});
- new ResizeObserver(()=>{camera.aspect=host.clientWidth/host.clientHeight;camera.updateProjectionMatrix();renderer.setSize(host.clientWidth,host.clientHeight)}).observe(host); const motionStart=performance.now(),motionDuration=900; function tick(now){const progress=Math.min((now-motionStart)/motionDuration,1),eased=1-Math.pow(1-progress,3); shoulder.position.lerpVectors(shoulderStart,shoulderTarget,eased); armPivots.forEach((pivot,index)=>pivot.rotation.z=THREE.MathUtils.lerp(cfg.previousJoints[index],cfg.joints[index],eased)*Math.PI/180); fingerPivots.forEach((finger,index)=>finger.forEach((pivot,jointIndex)=>{const angle=THREE.MathUtils.lerp(cfg.previousFingerJoints[index][jointIndex],cfg.fingerJoints[index][jointIndex],eased)*Math.PI/180;if(index===0&&jointIndex===1){pivot.rotation.z=angle;}else{pivot.rotation.y=-angle;}})); if(!cfg.grasped)can.position.copy(canStart); renderer.render(scene,camera);requestAnimationFrame(tick);} requestAnimationFrame(tick);
+ new ResizeObserver(()=>{camera.aspect=host.clientWidth/host.clientHeight;camera.updateProjectionMatrix();renderer.setSize(host.clientWidth,host.clientHeight)}).observe(host);
+ if(cfg.animate){const motionStart=performance.now(),motionDuration=520; function tick(now){const progress=Math.min((now-motionStart)/motionDuration,1),eased=1-Math.pow(1-progress,3); shoulder.position.lerpVectors(shoulderStart,shoulderTarget,eased); armPivots.forEach((pivot,index)=>pivot.rotation.z=THREE.MathUtils.lerp(cfg.previousJoints[index],cfg.joints[index],eased)*Math.PI/180); fingerMeshes.forEach((finger,index)=>applyFingerData(finger,cfg.previousFingerCapsules[index],cfg.fingerCapsules[index],eased)); if(!cfg.grasped)can.position.set(cfg.canOffset[0]+canStart.x,cfg.canOffset[1]+canStart.y,cfg.canOffset[2]+canStart.z); frameCamera(); renderer.render(scene,camera);requestAnimationFrame(tick);} requestAnimationFrame(tick);}else{shoulder.position.copy(shoulderTarget);armPivots.forEach((pivot,index)=>pivot.rotation.z=cfg.joints[index]*Math.PI/180);fingerMeshes.forEach((finger,index)=>applyFingerData(finger,cfg.fingerCapsules[index],cfg.fingerCapsules[index],1));if(!cfg.grasped)can.position.set(cfg.canOffset[0]+canStart.x,cfg.canOffset[1]+canStart.y,cfg.canOffset[2]+canStart.z);frameCamera();renderer.render(scene,camera);}
 })();</script>'''
     return html.replace("__THREE_RUNTIME__", three_runtime).replace("__CONFIG__", config)
 
 
-def foot_schematic_figure(zones: np.ndarray, terrain: str) -> go.Figure:
+def foot_schematic_figure(zones: np.ndarray, terrain: str, cop_xy: np.ndarray | None = None) -> go.Figure:
     """Render a six-zone sole and cyan FBG routing for teaching."""
     zones = np.asarray(zones, dtype=float)
     figure = go.Figure()
@@ -975,6 +963,8 @@ def foot_schematic_figure(zones: np.ndarray, terrain: str) -> go.Figure:
         figure.add_shape(type="rect", x0=x, x1=x + .9, y0=y, y1=y + .85, fillcolor=f"rgba(255,150,50,{min(.9,.18+value/80):.2f})", line={"color":"#dcebf3"})
         figure.add_annotation(x=x+.45, y=y+.42, text=f"区 {index+1}<br>{value:.0f} N", showarrow=False, font={"color":"white"})
     figure.add_scatter(x=[.1,.8,1.5,2.2,2.7], y=[1.65,1.4,1.55,1.3,.25], mode="lines+markers", name="足底 FBG 走线", line={"color":"#29c4d7","width":6})
+    if cop_xy is not None:
+        figure.add_scatter(x=[float(cop_xy[0])], y=[float(cop_xy[1])], mode="markers", name="压力中心 CoP", marker={"size": 15, "symbol": "x", "color": "#ffffff", "line": {"color": "#ff4d4f", "width": 3}})
     figure.update_layout(title=f"足底六区接触与光纤阵列：{terrain}", template="plotly_dark", height=390, xaxis={"visible":False,"range":[-.1,3.1]}, yaxis={"visible":False,"range":[-.1,2.1],"scaleanchor":"x"}, margin={"l":10,"r":10,"t":50,"b":10})
     return figure
 
@@ -1011,6 +1001,7 @@ def arm_health_figure(result: dict, diagnosis: dict) -> go.Figure:
     positions = np.asarray(result["sensor_positions_mm"], dtype=float)
     strain = np.asarray(result["strain"], dtype=float) * 1e6
     suspected = float(diagnosis["suspected_location_mm"])
+    uncertainty = float(diagnosis.get("location_uncertainty_mm", 60.0))
     figure = go.Figure()
     figure.add_scatter(
         x=[0.0, 520.0], y=[0.0, 0.0], mode="lines", name="机械臂构件",
@@ -1021,9 +1012,13 @@ def arm_health_figure(result: dict, diagnosis: dict) -> go.Figure:
         text=[f"FBG {index + 1}<br>{value:.0f} με" for index, value in enumerate(strain)],
         textposition="top center", marker={"size": 18, "color": strain, "colorscale": "YlOrRd", "showscale": True, "colorbar": {"title": "应变 (με)"}},
     )
-    figure.add_vline(x=suspected, line_dash="dash", line_color="#ff4d4f", annotation_text=f"可疑位置 {suspected:.0f} mm")
+    figure.add_vrect(
+        x0=suspected - uncertainty, x1=suspected + uncertainty,
+        fillcolor="rgba(255,77,79,.10)", line_width=0,
+    )
+    figure.add_vline(x=suspected, line_dash="dash", line_color="#ff4d4f", annotation_text=f"可疑位置 {suspected:.0f} ± {uncertainty:.0f} mm")
     figure.update_layout(
-        title=f"机械臂结构健康：可疑位置 {suspected:.0f} mm",
+        title=f"机械臂结构健康：可疑位置 {suspected:.0f} ± {uncertainty:.0f} mm",
         template="plotly_dark", height=360, xaxis_title="构件长度 (mm)",
         yaxis={"visible": False, "range": [-1.0, 1.8]}, margin={"l": 20, "r": 70, "t": 55, "b": 35},
     )

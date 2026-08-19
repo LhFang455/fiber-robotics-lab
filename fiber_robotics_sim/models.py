@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 
@@ -59,24 +61,8 @@ def fbg_simplus_normalised_text(result: dict[str, np.ndarray | int | str]) -> st
     values = np.asarray(result["input_values"], dtype=float)
     return "\n".join(" ".join(f"{value:.12g}" for value in row) for row in values) + "\n"
 
-
-def auto_grasp_phase(elapsed_seconds: float) -> str:
-    """Return the current phase of the non-blocking teaching grasp demonstration."""
-    if elapsed_seconds < 1.0:
-        return "寻找目标"
-    if elapsed_seconds < 2.0:
-        return "对准目标"
-    if elapsed_seconds < 3.0:
-        return "抓取"
-    if elapsed_seconds < 4.2:
-        return "搬运"
-    if elapsed_seconds < 5.0:
-        return "放下"
-    return "完成"
-
-
-def next_three_d_grasp_task_phase(current_phase: str, grasp_verified: bool) -> str:
-    """Advance one observable 3D grasp-task step.
+def next_grasp_task_phase(current_phase: str, grasp_verified: bool) -> str:
+    """Advance one observable grasp-task step shared by the 2D and 3D pages.
 
     The UI owns pose changes, while this small state transition keeps the task
     order deterministic.  Transport is deliberately impossible before the
@@ -176,18 +162,39 @@ _TACTILE_PROFILES = {
 }
 
 
-def simulate_material_touch(material: str, grip_force_n: float, contact_area_percent: float, temperature_change_c: float) -> dict[str, np.ndarray | float]:
-    """Generate five finger and one palm contact forces for four teaching materials."""
+def simulate_material_touch(
+    material: str,
+    grip_force_n: float,
+    contact_area_percent: float,
+    temperature_change_c: float,
+    pattern_noise: float = 0.0,
+    noise_nm: float = 0.0,
+    seed: int = 7,
+) -> dict[str, np.ndarray | float]:
+    """Generate five finger and one palm contact forces for four teaching materials.
+
+    ``pattern_noise`` perturbs the normalised contact pattern so the classifier
+    no longer recovers the material by construction, and ``noise_nm`` adds
+    wavelength measurement noise like the other modules.
+    """
     if material not in _TACTILE_PROFILES:
         raise ValueError("未知触觉材料")
+    if pattern_noise < 0.0 or noise_nm < 0.0:
+        raise ValueError("接触模式扰动与波长噪声不能为负")
     profile = _TACTILE_PROFILES[material]
     area_gain = .45 + .55 * np.clip(contact_area_percent, 0.0, 100.0) / 100.0
     touch = profile * max(0.0, grip_force_n) * area_gain
-    shifts = fbg_wavelength_shift_nm(touch * 4.0e-5, temperature_change_c)
+    if pattern_noise > 0.0:
+        generator = np.random.default_rng(int(seed))
+        touch = np.maximum(touch * (1.0 + generator.normal(0.0, pattern_noise, touch.shape)), 0.0)
+    clean_shifts = fbg_wavelength_shift_nm(touch * TACTILE_TOUCH_STRAIN_PER_N, temperature_change_c)
+    shifts = add_gaussian_noise(clean_shifts, noise_nm, int(seed) + 1)
     return {
         "finger_touch_n": touch[:5],
         "palm_touch_n": float(touch[5]),
         "wavelength_shifts_nm": shifts,
+        "clean_wavelength_shifts_nm": clean_shifts,
+        "pattern_noise": float(pattern_noise),
     }
 
 
@@ -195,11 +202,22 @@ def classify_tactile_material(finger_touch_n: np.ndarray, palm_touch_n: float) -
     """Classify a teaching material from normalized five-finger and palm contact pattern."""
     observed = np.r_[np.asarray(finger_touch_n, dtype=float), float(palm_touch_n)]
     if observed.shape != (6,) or np.allclose(observed, 0.0):
-        return {"material": "未接触", "confidence": 0.0}
+        return {
+            "material": "未接触",
+            "confidence": 0.0,
+            "probabilities": {name: 0.0 for name in _TACTILE_PROFILES},
+        }
     normalized = observed / np.linalg.norm(observed)
     scores = {name: float(np.dot(normalized, profile / np.linalg.norm(profile))) for name, profile in _TACTILE_PROFILES.items()}
     material = max(scores, key=scores.get)
-    return {"material": material, "confidence": scores[material]}
+    exp_scores = {name: float(np.exp(score)) for name, score in scores.items()}
+    total = sum(exp_scores.values())
+    probabilities = {name: exp_scores[name] / total for name in _TACTILE_PROFILES}
+    return {
+        "material": material,
+        "confidence": scores[material],
+        "probabilities": probabilities,
+    }
 
 
 def simulate_demodulation_chain(
@@ -230,26 +248,63 @@ def simulate_demodulation_chain(
     }
 
 
+@dataclass(frozen=True)
+class GraspCalibration:
+    """Per-channel FBG sensitivities shared by the 2D and 3D grasp models.
+
+    Defaults reproduce the teaching constants; a custom instance lets a lesson
+    change one channel's sensitivity or decision threshold without touching the
+    model math.
+    """
+
+    bend_strain_per_deg: float = 4.0e-5
+    contact_strain_per_n: float = 1.7e-4
+    finger_touch_strain_per_n: float = 2.4e-4
+    palm_touch_strain_per_n: float = 1.6e-4
+    contact_force_threshold_n: float = 0.12
+    palm_contact_threshold_n: float = 0.20
+
+
+PLANAR_GRASP_CALIBRATION = GraspCalibration(
+    contact_force_threshold_n=0.10,
+    palm_contact_threshold_n=0.08,
+)
+
+GRASP_FORCE_PER_DEGREE = 0.045
+GRASP_PALM_ACTIVE_FACTOR = 0.34
+GRASP_PALM_PASSIVE_FACTOR = 0.08
+GRASP_STABILITY_CONTACT_WEIGHT = 0.12
+GRASP_STABILITY_FORCE_WEIGHT = 0.05
+GRASP_STABILITY_FORCE_WEIGHT_3D = 0.08
+GRASP_STABILITY_PALM_BONUS = 0.25
+TACTILE_TOUCH_STRAIN_PER_N = 4.0e-5
+FOOT_SWING_LOAD_RATIO = 0.03
+
+
 def simulate_planar_grasp_fbg(
     finger_curls_deg: tuple[float, float, float, float, float] | np.ndarray,
-    contact_fingers: list[int],
+    contact_force_n: tuple[float, float, float, float, float] | np.ndarray,
     temperature_change_c: float,
-) -> dict[str, np.ndarray]:
-    """Generate five finger channels plus one palm contact-sensitive FBG channel."""
+    calibration: GraspCalibration = PLANAR_GRASP_CALIBRATION,
+) -> dict[str, np.ndarray | float]:
+    """Generate five finger channels plus one palm FBG channel from contact forces."""
     curls = np.asarray(finger_curls_deg, dtype=float)
-    if curls.shape != (5,):
-        raise ValueError("finger_curls_deg 必须包含五根手指")
-    contact = np.zeros(5, dtype=float)
-    contact[np.asarray(contact_fingers, dtype=int)] = 1.0
-    bend_strain = curls * 4.0e-5
-    contact_strain = contact * 2.1e-4
-    palm_contact = float(contact[0] > 0.0 and np.count_nonzero(contact[1:]) >= 2)
-    palm_contact_strain = palm_contact * 1.4e-4
+    forces = np.maximum(np.asarray(contact_force_n, dtype=float), 0.0)
+    if curls.shape != (5,) or forces.shape != (5,):
+        raise ValueError("二维 FBG 需要五根手指的屈曲角与接触力")
+    bend_strain = curls * calibration.bend_strain_per_deg
+    contact_strain = forces * calibration.contact_strain_per_n
+    finger_contacts = np.flatnonzero(forces >= calibration.contact_force_threshold_n).astype(int).tolist()
+    palm_active = bool(0 in finger_contacts and len([index for index in finger_contacts if index != 0]) >= 2)
+    palm_touch_n = float(forces.sum() * (GRASP_PALM_ACTIVE_FACTOR if palm_active else GRASP_PALM_PASSIVE_FACTOR))
+    palm_contact_strain = palm_touch_n * calibration.palm_touch_strain_per_n
     return {
         "wavelength_shifts_nm": fbg_wavelength_shift_nm(
             np.r_[bend_strain + contact_strain, palm_contact_strain], temperature_change_c
         ),
+        "contact_force_n": forces,
         "contact_strain": contact_strain,
+        "palm_touch_n": palm_touch_n,
         "palm_contact_strain": np.array([palm_contact_strain]),
     }
 
@@ -258,22 +313,257 @@ def classify_planar_grasp_from_fbg(
     sensing: dict[str, np.ndarray],
     finger_curls_deg: tuple[float, float, float, float, float] | np.ndarray,
     temperature_change_c: float,
-) -> dict[str, np.ndarray | list[int] | bool]:
-    """Recover tactile contacts from FBG readings and decide a planar grasp."""
+    calibration: GraspCalibration = PLANAR_GRASP_CALIBRATION,
+) -> dict[str, np.ndarray | list[int] | bool | float]:
+    """Recover per-finger contact forces from FBG readings and decide a planar grasp."""
     curls = np.asarray(finger_curls_deg, dtype=float)
     shifts = np.asarray(sensing["wavelength_shifts_nm"], dtype=float)
     if curls.shape != (5,) or shifts.shape != (6,):
         raise ValueError("二维 FBG 判定需要五根手指和一枚掌心 FBG 的波长读数")
     strain = _strain_from_shift(shifts, temperature_change_c)
-    contact_strain = np.maximum(0.0, strain[:5] - curls * 4.0e-5)
-    contact_fingers = np.flatnonzero(contact_strain >= 1.0e-4).astype(int).tolist()
+    contact_strain = np.maximum(0.0, strain[:5] - curls * calibration.bend_strain_per_deg)
+    contact_force_n = contact_strain / calibration.contact_strain_per_n
+    contact_fingers = np.flatnonzero(contact_force_n >= calibration.contact_force_threshold_n).astype(int).tolist()
+    palm_touch_n = max(0.0, float(strain[5])) / calibration.palm_touch_strain_per_n
     is_grasped = bool(0 in contact_fingers and len([index for index in contact_fingers if index != 0]) >= 2)
     return {
         "is_grasped": is_grasped,
         "contact_fingers": contact_fingers,
+        "contact_force_n": contact_force_n,
         "contact_strain": contact_strain,
-        "palm_contact": bool(strain[5] >= 7.0e-5),
+        "palm_touch_n": palm_touch_n,
+        "palm_contact": bool(palm_touch_n >= calibration.palm_contact_threshold_n),
     }
+
+
+_PLANAR_CAN_HALF_WIDTH = .24
+_PLANAR_CAN_HALF_HEIGHT = .37
+_PLANAR_FINGER_CONTACT_MARGIN = .08
+# 几何接触判定与 FBG 判定共用同一阈值，避免两处数字漂移。
+_PLANAR_CONTACT_FORCE_THRESHOLD_N = PLANAR_GRASP_CALIBRATION.contact_force_threshold_n
+
+
+def _arm_joint_coordinates(action: str) -> np.ndarray:
+    """Return base, elbow, wrist and hand locations for a named teaching action."""
+    poses_deg = {
+        "抬臂": (72.0, -50.0, -12.0),
+        "伸手": (18.0, 2.0, 0.0),
+        "抓取": (38.0, -58.0, 18.0),
+        "按压": (20.0, -68.0, -18.0),
+        "松开": (32.0, -35.0, 10.0),
+        "复位": (45.0, -60.0, 15.0),
+    }
+    angles = np.deg2rad(poses_deg.get(action, poses_deg["复位"]))
+    lengths = (3.5, 3.0, 1.25)
+    points = [np.array([0.0, 0.0])]
+    direction = 0.0
+    for length, angle in zip(lengths, angles):
+        direction += angle
+        points.append(points[-1] + length * np.array([np.cos(direction), np.sin(direction)]))
+    return np.asarray(points)
+
+
+def _planar_finger_polyline(
+    base: np.ndarray,
+    lengths: tuple[float, ...],
+    start_direction_rad: float,
+    curl_deg: float,
+    joints: tuple[float, float, float] | None = None,
+) -> np.ndarray:
+    """Return the same planar finger polyline as the 2D renderer for one curl value."""
+    points = [np.asarray(base, dtype=float)]
+    direction = float(start_direction_rad)
+    if joints is None:
+        joints = (0.0, curl_deg, curl_deg)
+    for length, joint_angle in zip(lengths, joints):
+        direction += np.deg2rad(joint_angle)
+        points.append(points[-1] + length * np.array([np.cos(direction), np.sin(direction)]))
+    return np.asarray(points)
+
+
+def dexterous_hand_pose(
+    action: str,
+    joint_angles_deg: tuple[float, float, float] | None = None,
+    finger_curls_deg: tuple[float, float, float, float, float] | None = None,
+    wrist_rotation_deg: float = 0.0,
+    planar_translation: tuple[float, float] = (0.0, 0.0),
+) -> dict[str, np.ndarray | list[np.ndarray] | float]:
+    """Return a planar five-finger hand pose tied to the selected arm action."""
+    arm_joints = _arm_joint_coordinates(action) if joint_angles_deg is None else _arm_joint_coordinates_from_angles(joint_angles_deg)
+    arm_joints = arm_joints + np.asarray(planar_translation, dtype=float)
+    wrist, hand = arm_joints[2], arm_joints[3]
+    forward = (hand - wrist) / np.linalg.norm(hand - wrist)
+    lateral = np.array([-forward[1], forward[0]])
+    palm_center = hand + .35 * forward
+    palm_length, palm_width = 1.18, .67
+    palm_outline = np.vstack([
+        palm_center - .50 * palm_length * forward - .50 * palm_width * lateral,
+        palm_center + .50 * palm_length * forward - .50 * palm_width * lateral,
+        palm_center + .50 * palm_length * forward + .50 * palm_width * lateral,
+        palm_center - .50 * palm_length * forward + .50 * palm_width * lateral,
+        palm_center - .50 * palm_length * forward - .50 * palm_width * lateral,
+    ])
+    palm_fiber_route = np.vstack([
+        palm_center - .33 * palm_length * forward - .18 * palm_width * lateral,
+        palm_center + .08 * palm_length * forward,
+        palm_center + .33 * palm_length * forward + .18 * palm_width * lateral,
+    ])
+    curl_by_action = {"抬臂": 8.0, "伸手": 4.0, "抓取": 84.0, "按压": 62.0, "松开": 18.0, "复位": 12.0}
+    curl = curl_by_action.get(action, 12.0)
+    curls = finger_curls_deg if finger_curls_deg is not None else (curl * .75, curl, curl, curl, curl)
+    finger_offsets = (-.275, -.10, .10, .275)
+    finger_lengths = ((.62, .48, .36), (.70, .52, .40), (.66, .50, .38), (.58, .43, .32))
+    fingers: list[np.ndarray] = []
+    fiber_routes: list[np.ndarray] = []
+    finger_builds: list[dict[str, object]] = []
+    for index, (offset, lengths) in enumerate(zip(finger_offsets, finger_lengths)):
+        base = palm_center + .50 * palm_length * forward + offset * lateral
+        splay = np.deg2rad(offset * 18.0)
+        local_curl = 88.0 if action == "按压" and index == 1 and finger_curls_deg is None else curls[index + 1]
+        start_direction = np.arctan2(forward[1], forward[0]) + splay
+        # 四指从 MCP 开始屈曲，使闭合时指尖回到掌心包络，而不是先直伸再弯。
+        finger_joints = (local_curl, local_curl, local_curl)
+        finger = _planar_finger_polyline(base, lengths, start_direction, local_curl, finger_joints)
+        fingers.append(finger)
+        fiber_routes.append(finger + .055 * lateral)
+        finger_builds.append({
+            "base": base,
+            "lengths": lengths,
+            "start_direction_rad": float(start_direction),
+            "commanded_curl_deg": float(local_curl),
+            "joints": finger_joints,
+        })
+    thumb_base = palm_center + .10 * palm_length * forward - .60 * palm_width * lateral
+    thumb_direction = np.arctan2(forward[1], forward[0]) + np.deg2rad(50.0)
+    thumb_curl = curls[0]
+    thumb_joints = (0.0, thumb_curl, thumb_curl)
+    thumb = _planar_finger_polyline(thumb_base, (.55, .42, .30), thumb_direction, thumb_curl, thumb_joints)
+    fingers.insert(0, thumb)
+    fiber_routes.insert(0, thumb - .055 * lateral)
+    finger_builds.insert(0, {
+        "base": thumb_base,
+        "lengths": (.55, .42, .30),
+        "start_direction_rad": float(thumb_direction),
+        "commanded_curl_deg": float(thumb_curl),
+        "joints": thumb_joints,
+    })
+    # 目标位于拇指与四根手指的闭合包络中心，闭合时由拇指与多根手指真实接触。
+    target = palm_center + .05 * forward + .35 * lateral
+    return {
+        "arm_joints": arm_joints,
+        "palm_center": palm_center,
+        "palm_outline": palm_outline,
+        "palm_fiber_route": palm_fiber_route,
+        "fingers": fingers,
+        "fiber_routes": fiber_routes,
+        "finger_builds": finger_builds,
+        "target": target,
+        "finger_curls_deg": np.asarray(curls, dtype=float),
+        "wrist_rotation_deg": float(wrist_rotation_deg),
+    }
+
+
+def _arm_joint_coordinates_from_angles(angles_deg: tuple[float, float, float]) -> np.ndarray:
+    """Return planar arm coordinates from independently controlled joint angles."""
+    angles = np.deg2rad(angles_deg)
+    lengths = (3.5, 3.0, 1.25)
+    points = [np.array([0.0, 0.0])]
+    direction = 0.0
+    for length, angle in zip(lengths, angles):
+        direction += angle
+        points.append(points[-1] + length * np.array([np.cos(direction), np.sin(direction)]))
+    return np.asarray(points)
+
+
+def _segment_rectangle_distance(
+    start: np.ndarray,
+    end: np.ndarray,
+    center: np.ndarray,
+    half_width: float,
+    half_height: float,
+    samples: int = 21,
+) -> float:
+    """Approximate segment-to-axis-aligned-rectangle distance by axial samples."""
+    start = np.asarray(start, dtype=float)
+    end = np.asarray(end, dtype=float)
+    samples_axis = np.linspace(0.0, 1.0, samples)[:, None]
+    points = start + samples_axis * (end - start)
+    dx = np.maximum(np.abs(points[:, 0] - center[0]) - half_width, 0.0)
+    dy = np.maximum(np.abs(points[:, 1] - center[1]) - half_height, 0.0)
+    return float(np.min(np.hypot(dx, dy)))
+
+
+def _planar_finger_clearance(build: dict, joints: np.ndarray, can_center: np.ndarray) -> float:
+    """Signed clearance between a finger polyline and the can, minus the contact margin."""
+    points = _planar_finger_polyline(
+        np.asarray(build["base"], dtype=float),
+        tuple(build["lengths"]),
+        float(build["start_direction_rad"]),
+        float(joints[0]),
+        tuple(float(value) for value in joints),
+    )
+    return min(
+        _segment_rectangle_distance(a, b, can_center, _PLANAR_CAN_HALF_WIDTH, _PLANAR_CAN_HALF_HEIGHT)
+        - _PLANAR_FINGER_CONTACT_MARGIN
+        for a, b in zip(points[:-1], points[1:])
+    )
+
+
+def _contact_limited_curl(build: dict, can_center: np.ndarray) -> float:
+    """Stop a finger at first can contact instead of letting it penetrate the rectangle."""
+    commanded_curl_deg = float(build["commanded_curl_deg"])
+    joints = np.asarray(build["joints"], dtype=float)
+    if _planar_finger_clearance(build, joints, can_center) >= 0.0:
+        return commanded_curl_deg
+    if _planar_finger_clearance(build, np.zeros_like(joints), can_center) < 0.0:
+        return 0.0
+    lower, upper = 0.0, 1.0
+    for _ in range(28):
+        middle = (lower + upper) / 2.0
+        if _planar_finger_clearance(build, joints * middle, can_center) >= 0.0:
+            lower = middle
+        else:
+            upper = middle
+    return commanded_curl_deg * lower
+
+
+def evaluate_can_grasp(pose: dict, can_center: np.ndarray) -> dict:
+    """Estimate per-finger contact forces by stopping each finger at the can boundary."""
+    can_center = np.asarray(can_center, dtype=float)
+    builds = pose["finger_builds"]
+    commanded_curls = np.asarray([float(build["commanded_curl_deg"]) for build in builds])
+    limited_curls = np.asarray([
+        _contact_limited_curl(build, can_center)
+        for build in builds
+    ])
+    contact_force_n = np.maximum(0.0, commanded_curls - limited_curls) * GRASP_FORCE_PER_DEGREE
+    contact_fingers = np.flatnonzero(contact_force_n >= _PLANAR_CONTACT_FORCE_THRESHOLD_N).astype(int).tolist()
+    non_thumb_contacts = [index for index in contact_fingers if index != 0]
+    is_grasped = bool(0 in contact_fingers and len(non_thumb_contacts) >= 2)
+    stability = min(
+        1.0,
+        GRASP_STABILITY_CONTACT_WEIGHT * len(contact_fingers)
+        + GRASP_STABILITY_FORCE_WEIGHT * float(min(contact_force_n.sum(), 1.0)),
+    )
+    tip_distances = np.asarray([np.linalg.norm(np.asarray(finger)[-1] - can_center) for finger in pose["fingers"]])
+    return {
+        "contact_fingers": contact_fingers,
+        "contact_force_n": contact_force_n,
+        "limited_curls_deg": limited_curls,
+        "tip_distances": tip_distances,
+        "stability": stability,
+        "is_grasped": is_grasped,
+    }
+
+
+def can_offset_from_target(pose: dict, can_center: np.ndarray) -> np.ndarray:
+    """Express the can displacement from the default target in hand-local axes."""
+    joints = np.asarray(pose["arm_joints"], dtype=float)
+    forward = joints[3] - joints[2]
+    forward /= np.linalg.norm(forward)
+    lateral = np.array([-forward[1], forward[0]])
+    displacement = np.asarray(can_center, dtype=float) - np.asarray(pose["target"], dtype=float)
+    return np.array([np.dot(displacement, forward), np.dot(displacement, lateral)])
 
 
 def _strain_from_shift(shifts_nm: np.ndarray, temperature_change_c: float) -> np.ndarray:
@@ -381,6 +671,19 @@ def estimate_contact(
     return float(best_position), float(best_force)
 
 
+FOOT_LOAD_STRAIN_PER_N = 4.0e-6
+SOLE_NOMINAL_PRELOAD_UE = 240.0
+SOLE_MEAN_RESIDUAL_LIMIT_UE = 45.0
+SOLE_LEFT_RIGHT_DIFFERENCE_LIMIT_UE = 70.0
+
+_FOOT_TERRAIN_WEIGHTS = {
+    "平地": np.ones(6),
+    "前倾坡面": np.array([1.3, 1.2, 1.1, .8, .7, .6]),
+    "后倾坡面": np.array([.6, .7, .8, 1.1, 1.2, 1.3]),
+    "柔软地面": np.array([.9, 1.0, .9, 1.0, .9, 1.0]),
+}
+
+
 def simulate_foot_fbg(
     zone_loads_n: np.ndarray,
     temperature_change_c: float,
@@ -397,7 +700,7 @@ def simulate_foot_fbg(
         raise ValueError("足底 FBG 模型需要六个区域载荷")
     if np.any(loads < 0.0):
         raise ValueError("足底区域载荷不能为负值")
-    strains = loads * 4.0e-6
+    strains = loads * FOOT_LOAD_STRAIN_PER_N
     clean_shifts = fbg_wavelength_shift_nm(strains, temperature_change_c)
     return {
         "zone_loads_n": loads,
@@ -414,11 +717,45 @@ def estimate_foot_load_distribution(
     shifts = np.asarray(wavelength_shifts_nm, dtype=float)
     if shifts.shape != (6,):
         raise ValueError("足底载荷反演需要六路 FBG 读数")
-    loads = np.maximum(0.0, _strain_from_shift(shifts, temperature_change_c) / 4.0e-6)
+    loads = np.maximum(0.0, _strain_from_shift(shifts, temperature_change_c) / FOOT_LOAD_STRAIN_PER_N)
+    total = max(float(loads.sum()), 1e-9)
+    zone_centers_x = (np.arange(6) % 3) + 0.45
+    zone_centers_y = (1 - np.arange(6) // 3) + 0.42
     return {
         "zone_loads_n": loads,
-        "cop_region": float(np.dot(np.arange(6), loads) / max(loads.sum(), 1e-9)),
+        "cop_region": float(np.dot(np.arange(6), loads) / total),
+        "cop_xy": np.array([
+            float(np.dot(zone_centers_x, loads) / total),
+            float(np.dot(zone_centers_y, loads) / total),
+        ]),
     }
+
+
+def simulate_foot_zone_loads(
+    load_n: float, terrain: str, phase_percent: float, support: str
+) -> np.ndarray:
+    """Distribute the vertical load over six zones with terrain and phase envelopes.
+
+    The stance-phase envelope moves weight from the heel row (zones 3-5) at 0%
+    to the forefoot row (zones 0-2) at 100%, so dragging the phase control
+    changes the loading pattern and the resulting CoP.
+    """
+    if terrain not in _FOOT_TERRAIN_WEIGHTS:
+        raise ValueError("未知地形")
+    if load_n < 0.0 or not 0.0 <= phase_percent <= 100.0:
+        raise ValueError("垂直载荷不能为负，步态相位必须在 0 到 100 之间")
+    weights = _FOOT_TERRAIN_WEIGHTS[terrain].copy()
+    stance_rad = np.pi * float(phase_percent) / 100.0
+    forefoot_envelope = 0.5 - 0.5 * np.cos(stance_rad)
+    heel_envelope = 0.5 + 0.5 * np.cos(stance_rad)
+    weights[:3] *= forefoot_envelope
+    weights[3:] *= heel_envelope
+    if weights.sum() <= 0.0:
+        weights = _FOOT_TERRAIN_WEIGHTS[terrain].copy()
+    zones = load_n * weights / weights.sum()
+    if support == "摆动期":
+        zones = zones * FOOT_SWING_LOAD_RATIO
+    return zones
 
 
 _REPLACEABLE_SOLE_CASES = {
@@ -429,9 +766,9 @@ _REPLACEABLE_SOLE_CASES = {
 
 
 def _classify_assembly(mean_baseline_residual_ue: float, left_right_difference_ue: float) -> str:
-    if abs(mean_baseline_residual_ue) > 45.0:
+    if abs(mean_baseline_residual_ue) > SOLE_MEAN_RESIDUAL_LIMIT_UE:
         return "压入不足：预测不通过"
-    if left_right_difference_ue > 70.0:
+    if left_right_difference_ue > SOLE_LEFT_RIGHT_DIFFERENCE_LIMIT_UE:
         return "单侧错位：预测不通过"
     return "装配预测通过"
 
@@ -441,26 +778,36 @@ def _assembly_readout(
     lateral_offset_mm: float,
     temperature_change_c: float,
     working_noise_ue: np.ndarray | None = None,
+    reference_temperature_change_c: float | None = None,
 ) -> dict[str, np.ndarray | float | str]:
-    """Return the common-temperature compensated readout for one assumed assembly state."""
-    nominal_preload_ue = 240.0
-    working_strain_ue = nominal_preload_ue * seating_ratio * np.array(
+    """Return one assembly readout where the reference FBG estimates temperature.
+
+    The working temperature is not injected directly: the mechanically isolated
+    reference FBG supplies the thermal estimate used to compensate the two
+    working gratings, so a mismatched reference produces a baseline bias inside
+    the same flow instead of in a separate diagnostic.
+    """
+    if reference_temperature_change_c is None:
+        reference_temperature_change_c = temperature_change_c
+    working_strain_ue = SOLE_NOMINAL_PRELOAD_UE * seating_ratio * np.array(
         [1.0 - lateral_offset_mm / 12.0, 1.0 + lateral_offset_mm / 12.0]
     )
     if working_noise_ue is not None:
         working_strain_ue = working_strain_ue + np.asarray(working_noise_ue, dtype=float)
     working_shifts_nm = fbg_wavelength_shift_nm(working_strain_ue * 1e-6, temperature_change_c)
-    reference_shift_nm = float(fbg_wavelength_shift_nm(np.array([0.0]), temperature_change_c)[0])
-    compensated_working_ue = _strain_from_shift(working_shifts_nm, temperature_change_c) * 1e6
+    reference_shift_nm = float(fbg_wavelength_shift_nm(np.array([0.0]), reference_temperature_change_c)[0])
+    estimated_temperature_change_c = float(reference_shift_nm / (WAVELENGTH_NM * THERMAL_SENSITIVITY_PER_C))
+    compensated_working_ue = _strain_from_shift(working_shifts_nm, estimated_temperature_change_c) * 1e6
     compensated_reference_ue = float(
-        _strain_from_shift(np.array([reference_shift_nm]), temperature_change_c)[0] * 1e6
+        _strain_from_shift(np.array([reference_shift_nm]), estimated_temperature_change_c)[0] * 1e6
     )
-    baseline_residual_ue = compensated_working_ue - compensated_reference_ue - nominal_preload_ue
+    baseline_residual_ue = compensated_working_ue - compensated_reference_ue - SOLE_NOMINAL_PRELOAD_UE
     mean_baseline_residual_ue = float(np.mean(baseline_residual_ue))
     left_right_difference_ue = float(abs(np.diff(compensated_working_ue)[0]))
     return {
         "working_wavelength_shifts_nm": working_shifts_nm,
         "reference_wavelength_shift_nm": reference_shift_nm,
+        "estimated_temperature_change_c": estimated_temperature_change_c,
         "temperature_compensated_working_strain_ue": compensated_working_ue,
         "temperature_compensated_reference_strain_ue": compensated_reference_ue,
         "baseline_residual_ue": baseline_residual_ue,
@@ -486,7 +833,6 @@ def simulate_replaceable_sole_assembly(
     if assembly_case not in _REPLACEABLE_SOLE_CASES:
         raise ValueError("装配工况必须为：正常装配、压入不足或单侧错位")
     case = _REPLACEABLE_SOLE_CASES[assembly_case]
-    nominal_preload_ue = 240.0
     lateral_offset_mm = float(case["lateral_offset_mm"])
     seating_ratio = float(case["seating_ratio"])
     readout = _assembly_readout(seating_ratio, lateral_offset_mm, temperature_change_c)
@@ -500,12 +846,12 @@ def simulate_replaceable_sole_assembly(
         "transfer_index": transfer_field["relative_transfer"],
         "transfer_centroid_x_mm": transfer_field["transfer_centroid_x_mm"],
         "case_parameters": {
-            "nominal_preload_ue": nominal_preload_ue,
+            "nominal_preload_ue": SOLE_NOMINAL_PRELOAD_UE,
             "seating_ratio": seating_ratio,
             "lateral_offset_mm": lateral_offset_mm,
             "insertion_deficit_mm": float(case["insertion_deficit_mm"]),
-            "mean_residual_limit_ue": 45.0,
-            "left_right_difference_limit_ue": 70.0,
+            "mean_residual_limit_ue": SOLE_MEAN_RESIDUAL_LIMIT_UE,
+            "left_right_difference_limit_ue": SOLE_LEFT_RIGHT_DIFFERENCE_LIMIT_UE,
         },
     }
 
@@ -531,7 +877,7 @@ def solve_sole_transfer_sensitivity_field(
     screening_per_mm2 = 0.018
     transfer = np.zeros_like(source)
     denominator = 4.0 + screening_per_mm2 * spacing_mm**2
-    for _ in range(240):
+    for _ in range(2000):
         next_transfer = transfer.copy()
         next_transfer[1:-1, 1:-1] = (
             transfer[:-2, 1:-1]
@@ -540,7 +886,10 @@ def solve_sole_transfer_sensitivity_field(
             + transfer[1:-1, 2:]
             + spacing_mm**2 * source[1:-1, 1:-1]
         ) / denominator
+        change = float(np.max(np.abs(next_transfer - transfer)))
         transfer = next_transfer
+        if change < 1e-8:
+            break
     relative_transfer = transfer / max(float(transfer.max()), 1e-12)
     total_transfer = float(relative_transfer.sum())
     transfer_centroid_x_mm = float(
@@ -602,22 +951,16 @@ def simulate_reference_temperature_mismatch(
     working_temperature_change_c: float, reference_temperature_change_c: float
 ) -> dict[str, float | str]:
     """Quantify the false baseline offset when reference and working FBGs differ in temperature."""
-    nominal_preload_ue = 240.0
-    working_shift_nm = fbg_wavelength_shift_nm(
-        np.full(2, nominal_preload_ue * 1e-6), working_temperature_change_c
+    readout = _assembly_readout(
+        1.0,
+        0.0,
+        working_temperature_change_c,
+        reference_temperature_change_c=reference_temperature_change_c,
     )
-    reference_shift_nm = float(
-        fbg_wavelength_shift_nm(np.array([0.0]), reference_temperature_change_c)[0]
-    )
-    working_ue = _strain_from_shift(working_shift_nm, working_temperature_change_c) * 1e6
-    reference_ue = float(
-        _strain_from_shift(np.array([reference_shift_nm]), working_temperature_change_c)[0] * 1e6
-    )
-    baseline_bias_ue = float(np.mean(working_ue) - reference_ue - nominal_preload_ue)
     return {
         "working_temperature_change_c": float(working_temperature_change_c),
         "reference_temperature_change_c": float(reference_temperature_change_c),
-        "baseline_bias_ue": baseline_bias_ue,
+        "baseline_bias_ue": float(readout["mean_baseline_residual_ue"]),
         "validation_boundary": "需要温度梯度试验",
     }
 
@@ -647,7 +990,7 @@ def simulate_preload_retention_sensitivity(
     if maximum_cycles < 0 or not 0.0 < assumed_retention_per_1000_cycles <= 1.0:
         raise ValueError("循环次数不能为负，千次保持率必须在 0 与 1 之间")
     cycle_count = np.linspace(0.0, float(maximum_cycles), 101)
-    preload_ue = 240.0 * assumed_retention_per_1000_cycles ** (cycle_count / 1000.0)
+    preload_ue = SOLE_NOMINAL_PRELOAD_UE * assumed_retention_per_1000_cycles ** (cycle_count / 1000.0)
     return {
         "cycle_count": cycle_count,
         "preload_ue": preload_ue,
@@ -708,9 +1051,10 @@ def simulate_arm_health_fbg(
     temperature_change_c: float,
     noise_nm: float,
     seed: int,
+    sensor_positions_mm: np.ndarray | None = None,
 ) -> dict[str, np.ndarray | float]:
-    """Simulate four FBGs on an arm link with a local damage-sensitive peak."""
-    positions = np.array([80.0, 200.0, 320.0, 440.0])
+    """Simulate an FBG array on an arm link with a local damage-sensitive peak."""
+    positions = np.asarray([80.0, 200.0, 320.0, 440.0] if sensor_positions_mm is None else sensor_positions_mm, dtype=float)
     severity = float(np.clip(damage_severity, 0.0, 1.0))
     baseline_strain = np.full(positions.shape, max(0.0, load_n) * 2.0e-6)
     damage_profile = severity * 8.0e-4 * np.exp(-0.5 * ((positions - damage_position_mm) / 55.0) ** 2)
@@ -726,19 +1070,33 @@ def simulate_arm_health_fbg(
 
 
 def diagnose_arm_health(
-    wavelength_shifts_nm: np.ndarray, temperature_change_c: float
+    wavelength_shifts_nm: np.ndarray,
+    temperature_change_c: float,
+    sensor_positions_mm: np.ndarray | None = None,
 ) -> dict[str, float | str]:
-    """Find the strongest local differential strain after common-mode compensation."""
+    """Localise the damage peak with a sub-sensor parabola fit and report uncertainty."""
     shifts = np.asarray(wavelength_shifts_nm, dtype=float)
-    positions = np.array([80.0, 200.0, 320.0, 440.0])
+    positions = np.asarray([80.0, 200.0, 320.0, 440.0] if sensor_positions_mm is None else sensor_positions_mm, dtype=float)
     if shifts.shape != positions.shape:
-        raise ValueError("机械臂健康诊断需要四路 FBG 读数")
+        raise ValueError("机械臂健康诊断需要与传感器阵列等长的 FBG 读数")
     strain = _strain_from_shift(shifts, temperature_change_c)
     local_excess = np.maximum(0.0, strain - np.median(strain))
     index = int(np.argmax(local_excess))
     damage_index = float(local_excess[index] / 8.0e-4)
+    spacing = float(np.diff(positions).min()) if len(positions) > 1 else 1.0
+    if len(positions) >= 3 and 0 < index < len(positions) - 1:
+        y0, y1, y2 = local_excess[index - 1], local_excess[index], local_excess[index + 1]
+        denominator = y0 - 2.0 * y1 + y2
+        offset_units = 0.5 * (y0 - y2) / denominator if abs(denominator) > 1e-12 else 0.0
+        suspected = float(positions[index] + np.clip(offset_units, -0.5, 0.5) * spacing)
+        uncertainty = spacing / 2.0
+    else:
+        suspected = float(positions[index])
+        uncertainty = spacing
     return {
-        "suspected_location_mm": float(positions[index]),
+        "suspected_location_mm": suspected,
+        "location_uncertainty_mm": uncertainty,
+        "sensor_spacing_mm": spacing,
         "damage_index": damage_index,
         "status": "需检查" if damage_index >= 0.35 else "正常",
     }
@@ -796,13 +1154,20 @@ def simulate_multicore_shape(
     temperature_change_c: float,
     noise_nm: float,
     seed: int,
+    core_temperature_gradient_c: float = 0.0,
 ) -> dict[str, np.ndarray | float]:
-    """Simulate a three-core FBG shape sensor and reconstruct its centreline."""
+    """Simulate a three-core FBG shape sensor and reconstruct its centreline.
+
+    A zero gradient gives the common-mode temperature that the differential
+    estimator rejects; a nonzero gradient adds per-core temperature offsets and
+    biases the estimate, which is exactly the model boundary to demonstrate.
+    """
     direction_rad = np.deg2rad(bend_direction_deg)
     angles = _core_angles_rad()
     radius_m = core_radius_um * 1e-6
     strains = radius_m * curvature_per_m * np.cos(angles - direction_rad)
-    clean_shifts = fbg_wavelength_shift_nm(strains, temperature_change_c)
+    core_temperature_c = temperature_change_c + core_temperature_gradient_c * (np.arange(3) - 1.0)
+    clean_shifts = fbg_wavelength_shift_nm(strains, core_temperature_c)
     shifts = add_gaussian_noise(clean_shifts, noise_nm, seed)
     estimated_curvature, estimated_direction = estimate_multicore_curvature(shifts, core_radius_um)
     return {
@@ -818,6 +1183,25 @@ def simulate_multicore_shape(
         ),
         "estimated_curvature_per_m": estimated_curvature,
         "estimated_direction_deg": estimated_direction,
+        "core_temperature_change_c": core_temperature_c,
+        "temperature_gradient_c": float(core_temperature_gradient_c),
+    }
+
+
+def simulate_shape_distributed_link(
+    length_mm: float,
+    core_strain: np.ndarray,
+    curvature_per_m: float,
+) -> dict[str, np.ndarray]:
+    """Per-core strain along the fibre plus a Rayleigh-style local peak for comparison."""
+    position = np.linspace(0.0, max(10.0, length_mm), 161)
+    cores = np.asarray(core_strain, dtype=float) * 1e6
+    core_profiles = np.repeat(cores[:, None], len(position), axis=1)
+    local_peak = float(abs(curvature_per_m)) * 120.0 * np.exp(-0.5 * ((position - length_mm * 0.5) / 30.0) ** 2)
+    return {
+        "position_mm": position,
+        "core_strain_ue": core_profiles,
+        "rayleigh_strain_ue": local_peak,
     }
 
 
@@ -899,12 +1283,126 @@ def simulate_brillouin_distribution(length_mm: float, temperature_c: float, peak
     return {"position_mm": position, "temperature_c": temperature, "strain_ue": strain, "brillouin_frequency_ghz": frequency}
 
 
+_BRILLOUIN_TEMP_COEFFICIENT_GHZ_PER_C = 0.0011
+_BRILLOUIN_STRAIN_COEFFICIENT_GHZ_PER_UE = 5e-5
+
+
+def simulate_brillouin_raman_compensation(
+    length_mm: float,
+    event_position_mm: float,
+    strain_peak_ue: float,
+    ambient_temperature_change_c: float,
+    local_temperature_rise_c: float,
+    temperature_noise_c: float = 0.0,
+    seed: int = 7,
+) -> dict[str, np.ndarray | float]:
+    """Show Brillouin/Raman temperature-strain decoupling on one fibre.
+
+    Brillouin frequency shift responds to both strain and temperature, so a
+    local temperature rise looks like apparent strain.  Raman measures the
+    temperature profile; subtracting its contribution recovers the true strain.
+    """
+    if strain_peak_ue < 0.0 or local_temperature_rise_c < 0.0 or temperature_noise_c < 0.0:
+        raise ValueError("应变峰值、局部温升与温度噪声不能为负")
+    position = np.linspace(0.0, max(10.0, length_mm), 241)
+    true_strain = strain_peak_ue * np.exp(-0.5 * ((position - event_position_mm) / 18.0) ** 2)
+    temperature = ambient_temperature_change_c + local_temperature_rise_c * np.exp(-0.5 * ((position - event_position_mm) / 25.0) ** 2)
+    frequency = 10.80 + _BRILLOUIN_TEMP_COEFFICIENT_GHZ_PER_C * temperature + _BRILLOUIN_STRAIN_COEFFICIENT_GHZ_PER_UE * true_strain
+    raman_temperature = temperature + add_gaussian_noise(np.zeros_like(temperature), temperature_noise_c, seed)
+    naive_strain = (frequency - 10.80) / _BRILLOUIN_STRAIN_COEFFICIENT_GHZ_PER_UE
+    compensated_strain = (
+        frequency - 10.80 - _BRILLOUIN_TEMP_COEFFICIENT_GHZ_PER_C * raman_temperature
+    ) / _BRILLOUIN_STRAIN_COEFFICIENT_GHZ_PER_UE
+    region = np.flatnonzero(true_strain > true_strain.max() * 0.1)
+
+    def peak_error(estimate: np.ndarray) -> float:
+        return float(np.max(np.abs(estimate[region] - true_strain[region])))
+
+    return {
+        "position_mm": position,
+        "true_strain_ue": true_strain,
+        "temperature_change_c": temperature,
+        "raman_temperature_c": raman_temperature,
+        "brillouin_frequency_ghz": frequency,
+        "naive_strain_ue": naive_strain,
+        "compensated_strain_ue": compensated_strain,
+        "naive_peak_error_ue": peak_error(naive_strain),
+        "compensated_peak_error_ue": peak_error(compensated_strain),
+        "temperature_rms_error_c": float(np.sqrt(np.mean((raman_temperature - temperature) ** 2))),
+        "validation_boundary": "系数为教学假设；真实 Brillouin 温/应变系数需要材料与波长标定",
+    }
+
+
 def simulate_raman_temperature(length_mm: float, heater_position_mm: float, peak_temperature_c: float) -> dict[str, np.ndarray]:
     """Teaching Raman DTS temperature profile from an anti-Stokes ratio proxy."""
     position = np.linspace(0.0, max(10.0, length_mm), 161)
     temperature = 20.0 + max(0.0, peak_temperature_c - 20.0) * np.exp(-.5 * ((position - heater_position_mm) / 25.0) ** 2)
     ratio = np.exp(-850.0 / (temperature + 273.15))
     return {"position_mm": position, "temperature_c": temperature, "anti_stokes_ratio": ratio}
+
+
+_DISTRIBUTED_QUALITY = {
+    "Rayleigh/OFDR": .93,
+    "φ-OTDR / DAS": .88,
+    "Brillouin": .90,
+    "Raman": .90,
+}
+
+
+def simulate_distributed_mechanism(
+    mode: str,
+    fiber_length_mm: float,
+    event_position_mm: float,
+    event_strength: float,
+    sample_rate_hz: int = 50,
+) -> tuple[dict[str, np.ndarray], dict[str, str | np.ndarray | float]]:
+    """Dispatch one distributed-sensing mechanism with a consistent quality frame."""
+    if mode == "Rayleigh/OFDR":
+        result = simulate_rayleigh_ofdr(fiber_length_mm, event_position_mm, event_strength, 2.0)
+        frame = build_sensor_frame(mode, result["position_mm"], result["raw_strain_ue"], result["strain_ue"], _DISTRIBUTED_QUALITY[mode])
+    elif mode == "φ-OTDR / DAS":
+        result = simulate_das_event(fiber_length_mm, event_position_mm, 60.0, int(sample_rate_hz))
+        frame = build_sensor_frame(mode, result["position_mm"], result["amplitude"], result["amplitude"], _DISTRIBUTED_QUALITY[mode])
+    elif mode == "Brillouin":
+        result = simulate_brillouin_distribution(fiber_length_mm, min(event_strength, 100.0), event_strength)
+        frame = build_sensor_frame(mode, result["position_mm"], result["brillouin_frequency_ghz"], result["strain_ue"], _DISTRIBUTED_QUALITY[mode])
+    elif mode == "Raman":
+        result = simulate_raman_temperature(fiber_length_mm, event_position_mm, min(event_strength, 120.0))
+        frame = build_sensor_frame(mode, result["position_mm"], result["anti_stokes_ratio"], result["temperature_c"], _DISTRIBUTED_QUALITY[mode])
+    else:
+        raise ValueError("未知分布式机制")
+    return result, frame
+
+
+def decimate_distributed_result(result: dict, spacing_mm: float) -> dict:
+    """Decimate a distributed-sensing result to a coarser spatial sampling.
+
+    Curves keep the same physics and only keep every ``step``-th spatial
+    sample; the DAS heatmap keeps its time axis and decimates the distance
+    axis.  This exposes the spatial-resolution point: coarse sampling
+    underestimates or misses narrow event peaks.
+    """
+    spacing_mm = max(0.5, float(spacing_mm))
+    sampled = dict(result)
+    if "time_s" in result and "amplitude" in result:
+        positions = np.asarray(result["position_mm"], dtype=float)
+        step = max(1, int(round(spacing_mm / max(float(np.diff(positions)[0]), 1e-9))))
+        sampled["position_mm"] = positions[::step]
+        sampled["amplitude"] = np.asarray(result["amplitude"], dtype=float)[:, ::step]
+        return sampled
+    if "das_distance_mm" in result:
+        positions = np.asarray(result["das_distance_mm"], dtype=float)
+        step = max(1, int(round(spacing_mm / max(float(np.diff(positions)[0]), 1e-9))))
+        sampled["das_distance_mm"] = positions[::step]
+        sampled["das_amplitude"] = np.asarray(result["das_amplitude"], dtype=float)[:, ::step]
+        return sampled
+    positions = np.asarray(result["position_mm"], dtype=float)
+    step = max(1, int(round(spacing_mm / max(float(np.diff(positions)[0]), 1e-9))))
+    sampled["position_mm"] = positions[::step]
+    for key in ("strain_ue", "raw_strain_ue", "temperature_c", "anti_stokes_ratio", "brillouin_frequency_ghz"):
+        if key in result:
+            sampled[key] = np.asarray(result[key], dtype=float)[::step]
+    return sampled
 
 
 def simulate_polarization_sensing(transverse_stress_mpa: float, twist_deg: float, temperature_change_c: float) -> dict[str, np.ndarray | float]:
@@ -917,6 +1415,25 @@ def simulate_polarization_sensing(transverse_stress_mpa: float, twist_deg: float
         np.sin(2 * ellipticity),
     ])
     return {"stokes": stokes / np.linalg.norm(stokes), "azimuth_deg": float(np.rad2deg(azimuth) % 180.0), "ellipticity_deg": float(np.rad2deg(ellipticity))}
+
+
+def simulate_polarization_map(
+    temperature_change_c: float = 0.0,
+    grid: int = 21,
+    stress_range_mpa: tuple[float, float] = (0.0, 250.0),
+    twist_range_deg: tuple[float, float] = (-90.0, 90.0),
+) -> dict[str, np.ndarray]:
+    """Azimuth and ellipticity over a stress-twist grid for a joint-view map."""
+    stress = np.linspace(stress_range_mpa[0], stress_range_mpa[1], int(grid))
+    twist = np.linspace(twist_range_deg[0], twist_range_deg[1], int(grid))
+    azimuth = np.zeros((int(grid), int(grid)))
+    ellipticity = np.zeros((int(grid), int(grid)))
+    for row, stress_value in enumerate(stress):
+        for column, twist_value in enumerate(twist):
+            state = simulate_polarization_sensing(stress_value, twist_value, temperature_change_c)
+            azimuth[row, column] = state["azimuth_deg"]
+            ellipticity[row, column] = state["ellipticity_deg"]
+    return {"stress_mpa": stress, "twist_deg": twist, "azimuth_deg": azimuth, "ellipticity_deg": ellipticity}
 
 
 def simulate_sagnac_gyro(angular_rate_deg_s: float, coil_length_m: float) -> dict[str, float]:
@@ -938,11 +1455,47 @@ def simulate_efpi_pressure(pressure_mpa: float, cavity_um: float) -> dict[str, n
     return {"wavelength_nm": wavelength_nm, "intensity": intensity, "effective_cavity_um": effective_cavity_um}
 
 
-def fuse_robot_sensing(grasp_verified: bool, balance_quality: float, shape_quality: float, health_status: str, distributed_quality: float) -> dict[str, float | str]:
-    """Summarise independent teaching estimators without treating them as a safety controller."""
-    score = float(np.mean([float(grasp_verified), balance_quality, shape_quality, distributed_quality]))
-    ready = grasp_verified and health_status == "正常" and min(balance_quality, shape_quality, distributed_quality) >= .75
-    return {"status": "任务就绪" if ready else "需人工复核", "confidence": score}
+@dataclass(frozen=True)
+class ModuleQuality:
+    """Per-module sensing quality consumed by the multimodal fusion layer."""
+
+    score: float
+    confidence: float
+    note: str = ""
+
+
+def assess_foot_quality(cop_region: float) -> ModuleQuality:
+    """Foot-balance quality: how close the CoP is to the sole centre (zone 2.5 of 0-5)."""
+    score = float(np.clip(1.0 - abs(float(cop_region) - 2.5) / 2.5, 0.0, 1.0))
+    return ModuleQuality(score, 1.0, "CoP 距足底中心距离")
+
+
+def assess_shape_quality(estimated_curvature_per_m: float, true_curvature_per_m: float) -> ModuleQuality:
+    """Multicore shape quality: inverse curvature error within a ±5 1/m teaching window."""
+    score = float(np.clip(1.0 - abs(float(estimated_curvature_per_m) - float(true_curvature_per_m)) / 5.0, 0.0, 1.0))
+    return ModuleQuality(score, 1.0, "多芯曲率反演误差")
+
+
+def assess_health_quality(status: str, damage_index: float) -> ModuleQuality:
+    """Structural-health quality: a passing status reports full quality, otherwise low."""
+    score = 1.0 if status == "正常" else 0.4
+    return ModuleQuality(score, 1.0, f"健康状态 {status}（指数 {float(damage_index):.2f}）")
+
+
+def fuse_robot_sensing(qualities: dict[str, ModuleQuality]) -> dict[str, float | str]:
+    """Combine independent module qualities into one task-readiness summary.
+
+    Grasp and health are hard gates; every other module must score at least
+    0.75 for the task to be considered ready.  This is a teaching summary, not
+    a safety controller.
+    """
+    scores = [float(np.clip(quality.score, 0.0, 1.0)) for quality in qualities.values()]
+    soft_gates = [name for name in qualities if name not in {"grasp", "health"}]
+    ready = (
+        all(qualities[name].score >= 0.75 for name in soft_gates)
+        and all(qualities[name].score >= 0.5 for name in ("grasp", "health"))
+    )
+    return {"status": "任务就绪" if ready else "需人工复核", "confidence": float(np.mean(scores))}
 
 
 _HAND_FINGER_BASES = np.array([
@@ -954,6 +1507,8 @@ _HAND_FINGER_SPREADS = (-.83, -.09, -.03, .05, .15)
 _CAN_GRASP_CENTER = np.array((.30, -.20, .76))
 _CAN_RADIUS = .48
 _CAN_HALF_LENGTH = .86
+
+THREE_D_GRASP_CALIBRATION = GraspCalibration()
 
 
 def relative_3d_target_offset(
@@ -988,8 +1543,27 @@ def _finger_capsules(finger_index: int, joint_angles_deg: tuple[float, ...]) -> 
         capsules.append((point, end, _HAND_FINGER_RADII[finger_index][segment_index]))
         point = end
         if segment_index + 1 < len(joint_angles_deg):
-            transform = transform @ _rotation_y(-np.deg2rad(joint_angles_deg[segment_index + 1]))
+            if finger_index == 0:
+                # 拇指 IP 与渲染器一致：绕局部 Z 轴正向弯曲。
+                transform = transform @ _rotation_z(np.deg2rad(joint_angles_deg[segment_index + 1]))
+            else:
+                transform = transform @ _rotation_y(-np.deg2rad(joint_angles_deg[segment_index + 1]))
     return capsules
+
+
+def three_d_finger_capsules(
+    finger_joint_angles_deg: tuple[tuple[float, ...], ...] | list[tuple[float, ...]],
+) -> list[list[tuple[np.ndarray, np.ndarray, float]]]:
+    """Return per-finger capsule geometry shared by collision and the renderer."""
+    joint_counts = (2, 3, 3, 3, 3)
+    if len(finger_joint_angles_deg) != 5 or any(
+        len(angles) != count for angles, count in zip(finger_joint_angles_deg, joint_counts)
+    ):
+        raise ValueError("三维手指几何需要 14 个关节角")
+    return [
+        _finger_capsules(finger_index, tuple(map(float, angles)))
+        for finger_index, angles in enumerate(finger_joint_angles_deg)
+    ]
 
 
 def _capsule_cylinder_clearance(start: np.ndarray, end: np.ndarray, radius: float, center: np.ndarray) -> float:
@@ -1008,32 +1582,49 @@ def _finger_collision_clearance(finger_index: int, joint_angles_deg: tuple[float
 
 
 def _collision_limited_finger_angles(finger_index: int, desired_angles: tuple[float, ...], center: np.ndarray) -> tuple[np.ndarray, float]:
-    """Stop a finger at first cylinder contact instead of rendering interpenetration."""
+    """Limit each joint in base-to-tip order at first cylinder contact.
+
+    A proximal joint bends as far as it can with the remaining joints straight,
+    then the next joint folds around the can, so the rendered finger wraps the
+    cylinder instead of being scaled down as a whole.
+    """
     desired = np.asarray(desired_angles, dtype=float)
     if _finger_collision_clearance(finger_index, tuple(desired), center) >= 0.0:
         return desired, _finger_collision_clearance(finger_index, tuple(desired), center)
     if _finger_collision_clearance(finger_index, tuple(np.zeros_like(desired)), center) < 0.0:
         return np.zeros_like(desired), _finger_collision_clearance(finger_index, tuple(np.zeros_like(desired)), center)
-    lower, upper = 0.0, 1.0
-    for _ in range(28):
-        middle = (lower + upper) / 2.0
-        if _finger_collision_clearance(finger_index, tuple(desired * middle), center) >= 0.0:
-            lower = middle
-        else:
-            upper = middle
-    limited = desired * lower
+    limited = np.zeros_like(desired)
+    for joint_index in range(len(desired)):
+        candidate = limited.copy()
+        candidate[joint_index] = desired[joint_index]
+        if _finger_collision_clearance(finger_index, tuple(candidate), center) >= 0.0:
+            limited[joint_index] = desired[joint_index]
+            continue
+        lower, upper = 0.0, 1.0
+        for _ in range(28):
+            middle = (lower + upper) / 2.0
+            candidate[joint_index] = desired[joint_index] * middle
+            if _finger_collision_clearance(finger_index, tuple(candidate), center) >= 0.0:
+                lower = middle
+            else:
+                upper = middle
+        limited[joint_index] = desired[joint_index] * lower
     return limited, _finger_collision_clearance(finger_index, tuple(limited), center)
 
 
-def classify_3d_grasp_from_fbg(sensing: dict[str, np.ndarray | list[int] | float | bool], temperature_change_c: float) -> dict[str, np.ndarray | list[int] | float | bool]:
+def classify_3d_grasp_from_fbg(
+    sensing: dict[str, np.ndarray | list[int] | float | bool],
+    temperature_change_c: float,
+    calibration: GraspCalibration = THREE_D_GRASP_CALIBRATION,
+) -> dict[str, np.ndarray | list[int] | float | bool]:
     """Classify holding state from compensated tactile FBG data, not geometry flags."""
     tactile_shift = np.asarray(sensing["tactile_fbg_shifts_nm"], dtype=float)
     arm_shift = np.asarray(sensing["arm_fbg_shifts_nm"], dtype=float)
     if tactile_shift.shape != (15,) or arm_shift.shape != (3,):
         raise ValueError("三维 FBG 判定需要 14 个指节、1 个掌心和 3 个臂部通道")
     tactile_strain = _strain_from_shift(tactile_shift, temperature_change_c)
-    finger_touch = tactile_strain[:14] / 2.4e-4
-    palm_touch = max(0.0, float(tactile_strain[14] / 1.6e-4))
+    finger_touch = tactile_strain[:14] / calibration.finger_touch_strain_per_n
+    palm_touch = max(0.0, float(tactile_strain[14] / calibration.palm_touch_strain_per_n))
     counts = (2, 3, 3, 3, 3)
     index = 0
     finger_force = []
@@ -1041,13 +1632,13 @@ def classify_3d_grasp_from_fbg(sensing: dict[str, np.ndarray | list[int] | float
         finger_force.append(float(np.sum(np.maximum(finger_touch[index : index + count], 0.0))))
         index += count
     finger_force_array = np.asarray(finger_force)
-    contacts = np.flatnonzero(finger_force_array >= .12).astype(int).tolist()
+    contacts = np.flatnonzero(finger_force_array >= calibration.contact_force_threshold_n).astype(int).tolist()
     arm_strain_ue = _strain_from_shift(arm_shift, temperature_change_c) * 1.0e6
-    is_grasped = bool(palm_touch >= .20 and 0 in contacts and len([item for item in contacts if item != 0]) >= 2)
+    is_grasped = bool(palm_touch >= calibration.palm_contact_threshold_n and 0 in contacts and len([item for item in contacts if item != 0]) >= 2)
     return {
         "is_grasped": is_grasped,
         "contact_fingers": contacts,
-        "finger_touch_n": finger_force_array,
+        "contact_force_n": finger_force_array,
         "palm_touch_n": palm_touch,
         "arm_bend_strain_ue": arm_strain_ue,
     }
@@ -1059,6 +1650,7 @@ def evaluate_3d_grasp_sensing(
     temperature_change_c: float = 0.0,
     arm_joint_angles_deg: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
     finger_joint_angles_deg: tuple[tuple[float, ...], ...] | None = None,
+    calibration: GraspCalibration = THREE_D_GRASP_CALIBRATION,
 ) -> dict[str, np.ndarray | list[int] | float | bool]:
     """Estimate the 3D grasp state and separated arm/tactile fibre readings.
 
@@ -1092,8 +1684,8 @@ def evaluate_3d_grasp_sensing(
     collision_clearance = np.asarray([clearance for _, clearance in limited_results])
     commanded_bend = np.asarray([np.mean(angles) for angles in finger_joint_angles_deg])
     limited_bend = np.asarray([np.mean(angles) for angles in limited_angles])
-    contact_force_n = np.maximum(0.0, commanded_bend - limited_bend) * .045
-    contact_fingers = np.flatnonzero(contact_force_n > .08).astype(int).tolist()
+    contact_force_n = np.maximum(0.0, commanded_bend - limited_bend) * GRASP_FORCE_PER_DEGREE
+    contact_fingers = np.flatnonzero(contact_force_n >= calibration.contact_force_threshold_n).astype(int).tolist()
     non_thumb_contacts = [index for index in contact_fingers if index != 0]
     palm_support = bool(
         -1.12 <= can_center[0] <= 1.04
@@ -1101,16 +1693,24 @@ def evaluate_3d_grasp_sensing(
         and .24 <= can_center[2] - _CAN_RADIUS <= .36
     )
     is_grasped = bool(palm_support and 0 in contact_fingers and len(non_thumb_contacts) >= 2)
-    stability = min(1.0, .12 * len(contact_fingers) + .08 * float(np.minimum(contact_force_n, 1.0).sum()) + (.25 if palm_support else 0.0))
+    stability = min(
+        1.0,
+        GRASP_STABILITY_CONTACT_WEIGHT * len(contact_fingers)
+        + GRASP_STABILITY_FORCE_WEIGHT_3D * float(np.minimum(contact_force_n, 1.0).sum())
+        + (GRASP_STABILITY_PALM_BONUS if palm_support else 0.0),
+    )
     tip_distances = collision_clearance
     # 五路读数保留为每根手指的综合弯曲/接触通道；分区通道在下方单独
     # 给出，避免把手臂弯曲误解释成触觉。
-    strain = curls * 4.0e-5 + contact_force_n * 1.7e-4
+    strain = curls * calibration.bend_strain_per_deg + contact_force_n * calibration.contact_strain_per_n
     segment_angles = np.concatenate([np.asarray(angles, dtype=float) for angles in finger_joint_angles_deg])
     finger_segment_touch = np.repeat(contact_force_n, joint_counts) / np.repeat(joint_counts, joint_counts)
-    palm_touch = float(contact_force_n.sum() * (.34 if is_grasped else .08))
+    palm_touch = float(contact_force_n.sum() * (GRASP_PALM_ACTIVE_FACTOR if is_grasped else GRASP_PALM_PASSIVE_FACTOR))
     arm_bend_strain = np.abs(arm_angles) * np.array([3.2, 4.1, 2.6])
-    tactile_strain = np.r_[finger_segment_touch * 2.4e-4, palm_touch * 1.6e-4]
+    tactile_strain = np.r_[
+        finger_segment_touch * calibration.finger_touch_strain_per_n,
+        palm_touch * calibration.palm_touch_strain_per_n,
+    ]
     arm_strain = arm_bend_strain * 1.0e-6
     return {
         "tip_distances": tip_distances,

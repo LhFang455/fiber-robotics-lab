@@ -141,6 +141,19 @@ def test_foot_fbg_round_trip_recovers_six_zone_loads_and_cop_without_noise():
 
     assert np.allclose(estimate["zone_loads_n"], loads)
     assert estimate["cop_region"] == pytest.approx(np.dot(np.arange(6), loads) / loads.sum())
+    assert np.asarray(estimate["cop_xy"]).shape == (2,)
+
+
+def test_foot_zone_loads_follow_terrain_and_phase_envelope():
+    heel = models.simulate_foot_zone_loads(180.0, "平地", 0.0, "支撑期")
+    toe = models.simulate_foot_zone_loads(180.0, "平地", 100.0, "支撑期")
+    swing = models.simulate_foot_zone_loads(180.0, "平地", 55.0, "摆动期")
+
+    assert heel.sum() == pytest.approx(180.0)
+    assert toe.sum() == pytest.approx(180.0)
+    assert heel[3:].sum() > heel[:3].sum()
+    assert toe[:3].sum() > toe[3:].sum()
+    assert swing.sum() == pytest.approx(180.0 * 0.03)
 
 
 def test_replaceable_sole_normal_assembly_matches_the_temperature_compensated_baseline():
@@ -286,8 +299,20 @@ def test_arm_health_monitoring_localises_a_damage_peak_after_temperature_compens
     diagnosis = models.diagnose_arm_health(result["wavelength_shifts_nm"], 16.0)
 
     assert diagnosis["status"] == "需检查"
-    assert diagnosis["suspected_location_mm"] == pytest.approx(320.0)
+    assert diagnosis["suspected_location_mm"] == pytest.approx(320.0, abs=5.0)
     assert diagnosis["damage_index"] > 0.35
+    assert diagnosis["location_uncertainty_mm"] == pytest.approx(60.0)
+
+
+def test_arm_health_localisation_reports_uncertainty_and_improves_with_density():
+    sparse = models.simulate_arm_health_fbg(80.0, 315.0, 0.70, 16.0, 0.0, 8)
+    sparse_diagnosis = models.diagnose_arm_health(sparse["wavelength_shifts_nm"], 16.0)
+    dense_positions = np.linspace(80.0, 440.0, 8)
+    dense = models.simulate_arm_health_fbg(80.0, 315.0, 0.70, 16.0, 0.0, 8, sensor_positions_mm=dense_positions)
+    dense_diagnosis = models.diagnose_arm_health(dense["wavelength_shifts_nm"], 16.0, sensor_positions_mm=dense_positions)
+
+    assert sparse_diagnosis["location_uncertainty_mm"] > dense_diagnosis["location_uncertainty_mm"]
+    assert abs(sparse_diagnosis["suspected_location_mm"] - 315.0) < 30.0
 
 
 def test_redundant_fbg_diagnosis_excludes_a_drifting_channel_from_angle_estimate():
@@ -304,6 +329,24 @@ def test_tactile_material_classifier_recovers_the_teaching_material_label():
 
     assert diagnosis["material"] == "海绵"
     assert diagnosis["confidence"] >= 0.70
+    assert diagnosis["probabilities"][diagnosis["material"]] == max(diagnosis["probabilities"].values())
+    assert sum(diagnosis["probabilities"].values()) == pytest.approx(1.0)
+
+
+def test_tactile_pattern_noise_can_misclassify_and_lowers_confidence():
+    noisy = models.simulate_material_touch("海绵", 5.0, 20.0, 0.0, pattern_noise=0.60, noise_nm=0.0, seed=21)
+    diagnosis = models.classify_tactile_material(noisy["finger_touch_n"], noisy["palm_touch_n"])
+
+    assert diagnosis["material"] != "海绵"
+    assert diagnosis["confidence"] < 0.95
+    assert sum(diagnosis["probabilities"].values()) == pytest.approx(1.0)
+
+
+def test_tactile_material_simulation_is_reproducible_for_a_seed():
+    first = models.simulate_material_touch("硬块", 6.0, 30.0, 5.0, pattern_noise=0.15, noise_nm=0.01, seed=11)
+    second = models.simulate_material_touch("硬块", 6.0, 30.0, 5.0, pattern_noise=0.15, noise_nm=0.01, seed=11)
+
+    assert np.allclose(first["wavelength_shifts_nm"], second["wavelength_shifts_nm"])
 
 
 def test_demodulation_chain_filters_and_temperature_compensates_a_control_signal():
@@ -361,11 +404,77 @@ def test_polarization_gyro_and_efpi_models_produce_their_distinct_optical_observ
 
 
 def test_multimodal_fusion_requires_quality_and_safety_to_report_ready():
-    ready = models.fuse_robot_sensing(True, .85, .90, "正常", .92)
-    warning = models.fuse_robot_sensing(True, .85, .90, "需检查", .92)
+    def quality(score: float) -> models.ModuleQuality:
+        return models.ModuleQuality(score, 1.0, "test")
+
+    ready = models.fuse_robot_sensing({
+        "grasp": quality(1.0), "foot": quality(.85), "shape": quality(.90),
+        "health": quality(1.0), "distributed": quality(.92),
+    })
+    warning = models.fuse_robot_sensing({
+        "grasp": quality(1.0), "foot": quality(.85), "shape": quality(.90),
+        "health": quality(.40), "distributed": quality(.92),
+    })
 
     assert ready["status"] == "任务就绪"
     assert warning["status"] == "需人工复核"
+
+
+def test_module_quality_assessors_are_bounded_and_center_aware():
+    assert models.assess_foot_quality(2.5).score == pytest.approx(1.0)
+    assert models.assess_foot_quality(5.0).score == pytest.approx(0.0)
+    assert models.assess_shape_quality(8.0, 8.0).score == pytest.approx(1.0)
+    assert models.assess_health_quality("需检查", 0.5).score < 0.75
+    assert 0.0 <= models.assess_foot_quality(0.0).score <= 1.0
+
+
+def test_simulate_distributed_mechanism_returns_result_and_quality_frame():
+    for mode in ("Rayleigh/OFDR", "φ-OTDR / DAS", "Brillouin", "Raman"):
+        result, frame = models.simulate_distributed_mechanism(mode, 300.0, 140.0, 600.0, sample_rate_hz=100)
+        assert 0.0 < float(frame["quality"]) <= 1.0
+        assert len(np.asarray(frame["position_or_channel"])) > 0
+        assert len(result["position_mm"]) > 0
+
+
+def test_decimate_distributed_result_reduces_spatial_points():
+    fine = models.simulate_rayleigh_ofdr(300.0, 140.0, 600.0, 1.0)
+    coarse = models.decimate_distributed_result(fine, 20.0)
+    assert len(coarse["position_mm"]) < len(fine["position_mm"])
+    assert coarse["strain_ue"].shape == coarse["position_mm"].shape
+    das = models.simulate_das_event(300.0, 140.0, 60.0, 100)
+    coarse_das = models.decimate_distributed_result(das, 20.0)
+    assert coarse_das["amplitude"].shape[1] < das["amplitude"].shape[1]
+    assert coarse_das["amplitude"].shape[0] == das["amplitude"].shape[0]
+
+
+def test_distributed_finger_figure_highlights_contacts():
+    result = models.simulate_distributed_sensing(np.full(5, 60.0), [0, 1, 2])
+    figure = visuals.distributed_finger_figure(result, [0, 1, 2])
+    assert len(figure.data) == 5
+    assert any("（接触）" in trace.name for trace in figure.data)
+
+
+def test_arm_distributed_vs_fbg_figure_overlays_discrete_and_continuous():
+    distributed = models.simulate_rayleigh_ofdr(520.0, 320.0, 400.0, 1.0)
+    positions = np.array([80.0, 200.0, 320.0, 440.0])
+    figure = visuals.arm_distributed_vs_fbg_figure(distributed, positions, np.full(4, 100.0), 320.0, 60.0)
+    assert len(figure.data) == 2
+    assert "分布式" in figure.layout.title.text
+
+
+def test_brillouin_raman_compensation_recovers_strain_after_temperature_decoupling():
+    result = models.simulate_brillouin_raman_compensation(300.0, 140.0, 400.0, 5.0, 15.0, temperature_noise_c=0.0)
+    noisy = models.simulate_brillouin_raman_compensation(300.0, 140.0, 400.0, 5.0, 15.0, temperature_noise_c=1.0)
+
+    assert result["naive_peak_error_ue"] > 200.0
+    assert result["compensated_peak_error_ue"] < 1.0
+    assert 0.0 < noisy["compensated_peak_error_ue"] < noisy["naive_peak_error_ue"]
+
+
+def test_brillouin_raman_compensation_figure_renders():
+    result = models.simulate_brillouin_raman_compensation(300.0, 140.0, 400.0, 5.0, 15.0)
+    figure = visuals.brillouin_raman_compensation_figure(result)
+    assert len(figure.data) >= 4
 
 
 def test_polarization_and_efpi_visuals_render_state_and_interference():
@@ -391,6 +500,51 @@ def test_multicore_differential_estimate_rejects_common_temperature_shift():
     assert models.estimate_multicore_curvature(cold["wavelength_shifts_nm"], 125.0) == pytest.approx(
         models.estimate_multicore_curvature(hot["wavelength_shifts_nm"], 125.0)
     )
+
+
+def test_multicore_temperature_gradient_biases_the_differential_estimate():
+    clean = models.simulate_multicore_shape(8.0, 35.0, 0.0, 150.0, 125.0, 20.0, 0.0, 4, core_temperature_gradient_c=0.0)
+    graded = models.simulate_multicore_shape(8.0, 35.0, 0.0, 150.0, 125.0, 20.0, 0.0, 4, core_temperature_gradient_c=10.0)
+
+    clean_curvature, _ = models.estimate_multicore_curvature(clean["wavelength_shifts_nm"], 125.0)
+    graded_curvature, _ = models.estimate_multicore_curvature(graded["wavelength_shifts_nm"], 125.0)
+    assert clean_curvature == pytest.approx(8.0)
+    assert abs(graded_curvature - 8.0) > 0.5
+    assert graded["temperature_gradient_c"] == pytest.approx(10.0)
+    assert np.allclose(graded["core_temperature_change_c"], [10.0, 20.0, 30.0])
+
+
+def test_shape_distributed_link_returns_per_core_and_rayleigh_profiles():
+    result = models.simulate_multicore_shape(8.0, 35.0, 0.0, 150.0, 125.0, 20.0, 0.0, 4)
+    link = models.simulate_shape_distributed_link(150.0, result["strain"], 8.0)
+    assert link["core_strain_ue"].shape == (3, len(link["position_mm"]))
+    assert link["rayleigh_strain_ue"].shape == link["position_mm"].shape
+    assert link["rayleigh_strain_ue"].max() > 0.0
+
+
+def test_shape_distributed_link_figure_renders():
+    link = models.simulate_shape_distributed_link(150.0, np.array([1e-3, 2e-3, 1.5e-3]), 8.0)
+    figure = visuals.shape_distributed_link_figure(link)
+    assert len(figure.data) == 4
+
+
+def test_simulate_polarization_map_returns_grid():
+    result = models.simulate_polarization_map(temperature_change_c=5.0, grid=11)
+    assert result["azimuth_deg"].shape == (11, 11)
+    assert result["ellipticity_deg"].shape == (11, 11)
+    assert 0.0 <= result["azimuth_deg"].min() <= result["azimuth_deg"].max() < 180.0
+
+
+def test_polarization_map_figure_renders():
+    result = models.simulate_polarization_map(grid=11)
+    figure = visuals.polarization_map_figure(result)
+    assert sum(trace.type == "heatmap" for trace in figure.data) == 2
+
+
+def test_sensing_chain_svg_contains_the_four_stages():
+    markup = visuals.sensing_chain_svg()
+    assert markup.startswith("<svg")
+    assert "光纤传感" in markup and "控制与任务" in markup
 
 
 def test_finger_figure_has_centerline_trace():
@@ -423,8 +577,8 @@ def test_arm_action_changes_planar_joint_coordinates():
 
 
 def test_dexterous_hand_pose_has_five_fingers_and_grasp_closes_them():
-    opened = visuals.dexterous_hand_pose("伸手")
-    grasping = visuals.dexterous_hand_pose("抓取")
+    opened = models.dexterous_hand_pose("伸手")
+    grasping = models.dexterous_hand_pose("抓取")
     assert len(opened["fingers"]) == 5
     assert np.linalg.norm(grasping["fingers"][1][-1] - grasping["palm_center"]) < np.linalg.norm(
         opened["fingers"][1][-1] - opened["palm_center"]
@@ -432,8 +586,8 @@ def test_dexterous_hand_pose_has_five_fingers_and_grasp_closes_them():
 
 
 def test_translated_hand_pose_moves_every_planar_feature_by_the_same_offset():
-    base = visuals.dexterous_hand_pose("抓取")
-    moved = visuals.dexterous_hand_pose("抓取", planar_translation=(2.5, -1.25))
+    base = models.dexterous_hand_pose("抓取")
+    moved = models.dexterous_hand_pose("抓取", planar_translation=(2.5, -1.25))
 
     assert np.allclose(np.asarray(moved["arm_joints"]) - np.asarray(base["arm_joints"]), [2.5, -1.25])
     assert np.allclose(np.asarray(moved["palm_outline"]) - np.asarray(base["palm_outline"]), [2.5, -1.25])
@@ -453,10 +607,10 @@ def test_arm_3d_figure_contains_five_finger_traces():
 
 
 def test_can_grasp_requires_thumb_and_two_other_contacts():
-    pose = visuals.dexterous_hand_pose("抓取")
-    grasp = visuals.evaluate_can_grasp(pose, np.asarray(pose["target"]))
-    opened = visuals.dexterous_hand_pose("伸手")
-    open_grasp = visuals.evaluate_can_grasp(opened, np.asarray(opened["target"]))
+    pose = models.dexterous_hand_pose("抓取")
+    grasp = models.evaluate_can_grasp(pose, np.asarray(pose["target"]))
+    opened = models.dexterous_hand_pose("伸手")
+    open_grasp = models.evaluate_can_grasp(opened, np.asarray(opened["target"]))
     assert grasp["is_grasped"] is True
     assert 0 in grasp["contact_fingers"]
     assert len([index for index in grasp["contact_fingers"] if index != 0]) >= 2
@@ -464,27 +618,59 @@ def test_can_grasp_requires_thumb_and_two_other_contacts():
 
 
 def test_planar_grasp_success_is_decided_from_temperature_compensated_fbg_contact_channels():
-    sensed = models.simulate_planar_grasp_fbg((63.0, 84.0, 84.0, 84.0, 84.0), [0, 1, 2, 3, 4], 9.0)
-    displaced = models.simulate_planar_grasp_fbg((63.0, 84.0, 84.0, 84.0, 84.0), [], 9.0)
+    sensed = models.simulate_planar_grasp_fbg((63.0, 84.0, 84.0, 84.0, 84.0), (1.0, 0.8, 0.6, 0.4, 0.3), 9.0)
+    displaced = models.simulate_planar_grasp_fbg((63.0, 84.0, 84.0, 84.0, 84.0), np.zeros(5), 9.0)
 
     assert models.classify_planar_grasp_from_fbg(sensed, (63.0, 84.0, 84.0, 84.0, 84.0), 9.0)["is_grasped"] is True
     assert models.classify_planar_grasp_from_fbg(displaced, (63.0, 84.0, 84.0, 84.0, 84.0), 9.0)["is_grasped"] is False
+    recovered = models.classify_planar_grasp_from_fbg(sensed, (63.0, 84.0, 84.0, 84.0, 84.0), 9.0)
+    assert np.allclose(recovered["contact_force_n"], (1.0, 0.8, 0.6, 0.4, 0.3))
 
 
 def test_planar_grasp_exposes_a_sixth_palm_fbg_without_changing_the_finger_grasp_rule():
-    sensed = models.simulate_planar_grasp_fbg((63.0, 84.0, 84.0, 84.0, 84.0), [0, 1, 2], 0.0)
+    sensed = models.simulate_planar_grasp_fbg((63.0, 84.0, 84.0, 84.0, 84.0), (0.9, 0.6, 0.4, 0.0, 0.0), 0.0)
     decision = models.classify_planar_grasp_from_fbg(sensed, (63.0, 84.0, 84.0, 84.0, 84.0), 0.0)
 
     assert sensed["wavelength_shifts_nm"].shape == (6,)
     assert decision["is_grasped"] is True
     assert decision["palm_contact"] is True
+    assert decision["palm_touch_n"] > 0.0
 
 
-def test_planar_transition_draws_a_distinct_palm_fbg_route():
-    pose = visuals.dexterous_hand_pose("抓取")
-    figure = visuals.planar_hand_transition_figure(pose, pose, pose["target"], pose["target"], True, True)
+def test_grasp_calibration_changes_channel_sensitivity():
+    curls = (63.0, 84.0, 84.0, 84.0, 84.0)
+    forces = (1.0, 0.5, 0.3, 0.0, 0.0)
+    default = models.simulate_planar_grasp_fbg(curls, forces, 0.0)
+    sensitive = models.simulate_planar_grasp_fbg(
+        curls, forces, 0.0,
+        calibration=models.GraspCalibration(contact_strain_per_n=3.4e-4),
+    )
 
-    assert "掌心 FBG" in {trace.name for trace in figure.data}
+    assert sensitive["contact_strain"][0] == pytest.approx(2.0 * default["contact_strain"][0])
+
+
+def test_planar_animation_html_draws_the_palm_fbg_route():
+    pose = models.dexterous_hand_pose("抓取")
+    markup = visuals.planar_hand_animation_html(
+        pose, pose, pose["target"], pose["target"], True, True,
+        previous_contact_fingers=[0, 1, 2],
+        current_contact_fingers=[0, 1, 2],
+    )
+
+    assert "__CONFIG__" not in markup
+    assert "palmFibre" in markup
+    assert '"contacts": [0, 1, 2]' in markup
+    assert "#ffcc66" in markup and "#ffe06a" in markup
+    assert "三维" not in markup
+
+
+def test_planar_animation_frame_matches_the_shared_transition_contract():
+    pose = models.dexterous_hand_pose("抓取")
+    frame = visuals.planar_animation_frame(pose, pose["target"], True, [0, 1, 2])
+
+    assert set(frame) == {"arm", "palm", "palmFibre", "fingers", "fibres", "can", "grasped", "contacts"}
+    assert frame["contacts"] == [0, 1, 2]
+    assert frame["grasped"] is True
 
 
 def test_3d_grasp_sensing_is_independent_and_responds_to_depth_offset():
@@ -529,6 +715,26 @@ def test_three_d_grasp_uses_a_palm_top_cylinder_and_clamps_fingers_at_collision(
         np.all(np.asarray(actual) <= np.asarray(commanded) + 1e-9)
         for actual, commanded in zip(result["collision_limited_joint_angles_deg"], desired)
     )
+    # 逐关节限位：近端关节可以完全屈曲，只有远端关节绕罐体折叠。
+    assert result["collision_limited_joint_angles_deg"][1][1] == pytest.approx(104.0)
+    assert result["collision_limited_joint_angles_deg"][1][2] < 74.0
+
+
+def test_thumb_collision_capsules_bend_the_ip_around_the_renderer_z_axis():
+    capsules = models._finger_capsules(0, (58.0, 74.0))
+    tip = capsules[-1][1]
+    lengths = models._HAND_FINGER_LENGTHS[0]
+    transform = models._rotation_z(models._HAND_FINGER_SPREADS[0]) @ models._rotation_y(-np.deg2rad(58.0))
+    point = models._HAND_FINGER_BASES[0].copy() + transform @ np.array((lengths[0], 0.0, 0.0))
+    transform = transform @ models._rotation_z(np.deg2rad(74.0))
+    point = point + transform @ np.array((lengths[1], 0.0, 0.0))
+
+    assert np.allclose(tip, point)
+    wrong_transform = models._rotation_z(models._HAND_FINGER_SPREADS[0]) @ models._rotation_y(-np.deg2rad(58.0))
+    wrong_point = models._HAND_FINGER_BASES[0].copy() + wrong_transform @ np.array((lengths[0], 0.0, 0.0))
+    wrong_transform = wrong_transform @ models._rotation_y(-np.deg2rad(74.0))
+    wrong_point = wrong_point + wrong_transform @ np.array((lengths[1], 0.0, 0.0))
+    assert np.linalg.norm(tip - wrong_point) > 0.5
 
 
 def test_three_d_target_remains_fixed_while_the_hand_reaches_its_world_position():
@@ -560,34 +766,26 @@ def test_anthropomorphic_renderer_routes_fibre_across_arm_palm_and_every_finger_
     assert "armFiber" in markup
     assert "palmFiberA" in markup
     assert "segmentFiber" in markup
+    assert "segmentFiber.quaternion.copy(bone.quaternion)" in markup
 
 
 def test_can_offset_from_target_uses_hand_forward_and_lateral_axes():
-    pose = visuals.dexterous_hand_pose("抓取")
+    pose = models.dexterous_hand_pose("抓取")
     joints = np.asarray(pose["arm_joints"])
     forward = joints[3] - joints[2]
     forward /= np.linalg.norm(forward)
     lateral = np.array([-forward[1], forward[0]])
     can_center = np.asarray(pose["target"]) + 1.2 * forward - .4 * lateral
 
-    assert np.allclose(visuals.can_offset_from_target(pose, can_center), [1.2, -.4])
+    assert np.allclose(models.can_offset_from_target(pose, can_center), [1.2, -.4])
 
 
-def test_auto_grasp_phase_advances_through_the_teaching_sequence():
-    assert models.auto_grasp_phase(0.0) == "寻找目标"
-    assert models.auto_grasp_phase(1.2) == "对准目标"
-    assert models.auto_grasp_phase(2.2) == "抓取"
-    assert models.auto_grasp_phase(3.2) == "搬运"
-    assert models.auto_grasp_phase(4.4) == "放下"
-    assert models.auto_grasp_phase(5.1) == "完成"
-
-
-def test_three_d_grasp_task_only_advances_to_transport_after_a_verified_closure():
-    assert models.next_three_d_grasp_task_phase("寻找目标", False) == "对准目标"
-    assert models.next_three_d_grasp_task_phase("对准目标", False) == "闭合抓取"
-    assert models.next_three_d_grasp_task_phase("闭合抓取", False) == "抓取失败"
-    assert models.next_three_d_grasp_task_phase("闭合抓取", True) == "搬运目标"
-    assert models.next_three_d_grasp_task_phase("搬运目标", True) == "松开并放置"
+def test_grasp_task_only_advances_to_transport_after_a_verified_closure():
+    assert models.next_grasp_task_phase("寻找目标", False) == "对准目标"
+    assert models.next_grasp_task_phase("对准目标", False) == "闭合抓取"
+    assert models.next_grasp_task_phase("闭合抓取", False) == "抓取失败"
+    assert models.next_grasp_task_phase("闭合抓取", True) == "搬运目标"
+    assert models.next_grasp_task_phase("搬运目标", True) == "松开并放置"
 
 
 def test_arm_3d_figure_has_can_mesh_trace():
@@ -603,7 +801,7 @@ def test_app_exposes_independent_thumb_control():
 def test_app_exposes_can_position_controls():
     app = AppTest.from_file("app.py").run()
     controls = {slider.label: slider for slider in app.slider}
-    assert {"饮料罐水平位置", "饮料罐垂直位置", "饮料罐深度位置 (3D)"} <= controls.keys()
+    assert {"饮料罐水平位置", "饮料罐垂直位置"} <= controls.keys()
     assert controls["饮料罐水平位置"].disabled is False
 
 
@@ -616,21 +814,23 @@ def test_app_exposes_the_stepwise_planar_find_grasp_and_place_actions():
 def test_app_keeps_the_planar_can_position_controls_for_world_targets():
     app = AppTest.from_file("app.py").run()
     labels = {slider.label for slider in app.slider}
-    assert {"饮料罐水平位置", "饮料罐垂直位置", "饮料罐深度位置 (3D)"} <= labels
+    assert {"饮料罐水平位置", "饮料罐垂直位置"} <= labels
 
 
 def test_app_exposes_shoulder_translation_controls():
     app = AppTest.from_file("app.py").run()
     labels = {slider.label for slider in app.slider}
-    assert {"肩部 X 位移", "肩部 Y 位移", "肩部 Z 位移"} <= labels
+    assert {"肩部水平位移", "肩部垂直位移"} <= labels
 
 
 def test_app_keeps_automatically_aligned_shoulder_offsets_inside_the_control_range():
     source = Path("app.py").read_text(encoding="utf-8")
 
-    assert 'st.slider("肩部 X 位移", -12.0, 12.0' in source
-    assert 'st.slider("肩部 Y 位移", -12.0, 12.0' in source
-    assert 'st.slider("肩部 Z 位移", -12.0, 12.0' in source
+    assert 'st.slider("肩部水平位移", -12.0, 12.0' in source
+    assert 'st.slider("肩部垂直位移", -12.0, 12.0' in source
+    assert 'shoulder_translation_x = float(can_world[0] - target[0])' in source
+    assert 'shoulder_translation_z = float(can_world[1] - target[1])' in source
+    assert "can_depth_z" not in source
 
 
 def test_distributed_sensing_returns_five_rayleigh_profiles_and_das_map():
@@ -663,13 +863,13 @@ def test_anthropomorphic_hand_renderer_has_arm_palm_thumb_and_five_articulated_f
     markup = visuals.anthropomorphic_hand_html("抓取", (38, -58, 18), (60, 80, 80, 80, 80), True)
 
     assert "掌心轮廓" in markup
-    assert "makeFinger" in markup
+    assert "makeFingerFromData" in markup
     assert "makeArm" in markup
     assert "const links=[[6.3,.43" in markup
     assert "pivot.rotation.z=a[n]" in markup
     assert "link.rotation.z=-Math.PI/2" in markup
-    assert "root.rotation.z=spread" in markup
-    assert "pivot.rotation.y=-jointAngles[n]" in markup
+    assert '"fingerCapsules"' in markup
+    assert '"previousFingerCapsules"' in markup
 
 
 def test_anthropomorphic_hand_renderer_can_apply_a_page_specific_finger_curl_gain():
@@ -679,13 +879,12 @@ def test_anthropomorphic_hand_renderer_can_apply_a_page_specific_finger_curl_gai
 
     assert '"curlGain": 1.65' in markup
     assert '"fingerJoints"' in markup
-    assert "[1.31,.85]" in markup
-    assert "[1.384,1.0,.72]" in markup
+    assert '"fingerCapsules"' in markup
     assert "当前动作：" in markup
     assert "Orbit-like" in markup
     assert "can.visible=true" in markup
     assert "三维动作" not in markup
-    assert markup.count("makeFinger(") >= 5
+    assert "makeFingerFromData" in markup
 
 
 def test_anthropomorphic_hand_renderer_supports_fourteen_independent_finger_joints():
@@ -695,32 +894,29 @@ def test_anthropomorphic_hand_renderer_supports_fourteen_independent_finger_join
     )
 
     assert '"fingerJoints": [[58.0, 74.0], [72.0, 104.0, 74.0]' in markup
-    assert "if(thumb){root.rotateY(-jointAngles[0]*Math.PI/180);}" in markup
-    assert "pivot.rotation.y=-jointAngles[n]" in markup
+    assert '"fingerCapsules"' in markup
+    assert '"previousFingerCapsules"' in markup
 
 
-def test_thumb_mcp_uses_the_reversed_root_direction_without_changing_its_chain():
+def test_anthropomorphic_hand_renderer_serialises_finger_capsules():
     markup = visuals.anthropomorphic_hand_html(
         "三维握拳", (38, -58, 18), (72, 84, 84, 84, 84), True,
         finger_joint_angles_deg=((58, 74), (72, 104, 74), (72, 104, 74), (72, 104, 74), (72, 104, 74)),
     )
 
-    assert "root.rotation.z=spread" in markup
-    assert "if(thumb){root.rotateY(-jointAngles[0]*Math.PI/180);}" in markup
+    assert '"fingerCapsules"' in markup
+    assert "makeFingerFromData" in markup
+    assert "applyFingerData" in markup
 
 
-def test_thumb_keeps_the_original_two_joint_chain_and_reverses_only_its_root_direction():
+def test_thumb_renderer_keeps_the_two_joint_chain_without_overlay():
     markup = visuals.anthropomorphic_hand_html(
         "三维握拳", (38, -58, 18), (72, 84, 84, 84, 84), True,
         finger_joint_angles_deg=((85, 74), (72, 104, 74), (72, 104, 74), (72, 104, 74), (72, 104, 74)),
     )
 
-    assert "root.position.set(...base)" in markup
-    assert "knuckle.position.set(...base)" in markup
-    assert "root.rotation.z=spread" in markup
-    assert "if(thumb){root.rotateY(-jointAngles[0]*Math.PI/180);}" in markup
-    assert "if(thumb){pivot.rotation.z=jointAngles[n]*Math.PI/180;}" in markup
-    assert "pivot.rotation.y=-jointAngles[n]*Math.PI/180" in markup
+    assert '"fingerCapsules"' in markup
+    assert '"previousFingerCapsules"' in markup
     assert "thumbOverlay" not in markup
 
 
@@ -765,12 +961,12 @@ def test_anthropomorphic_hand_uses_fixed_axes_and_interpolates_only_the_hand_bef
     assert 'new THREE.AxesHelper(2.0)' in markup
     assert 'camera.position.set(16,-18,14)' in markup
     assert 'armPivots.forEach((pivot,index)=>' in markup
-    assert 'fingerPivots.forEach((finger,index)=>' in markup
-    assert 'if(!cfg.grasped)can.position.copy(canStart)' in markup
+    assert 'applyFingerData(finger,cfg.previousFingerCapsules[index],cfg.fingerCapsules[index],eased)' in markup
+    assert 'if(!cfg.grasped)can.position.set(cfg.canOffset[0]+canStart.x,cfg.canOffset[1]+canStart.y,cfg.canOffset[2]+canStart.z)' in markup
 
 
 def test_anthropomorphic_hand_renderer_embeds_shared_planar_geometry():
-    pose = visuals.dexterous_hand_pose("抓取")
+    pose = models.dexterous_hand_pose("抓取")
     markup = visuals.anthropomorphic_hand_html(
         "抓取", (38, -58, 18), (60, 80, 80, 80, 80), True, planar_pose=pose
     )
@@ -787,12 +983,11 @@ def test_anthropomorphic_hand_renderer_keeps_the_solid_articulated_model_visible
     assert "viewDistance=viewRadius/Math.sin(THREE.MathUtils.degToRad(camera.fov/2))*1.2" in markup
     assert "graspFrame.position.set(.30,-.20,.76)" in markup
     assert "can.rotation.z=Math.PI/2" not in markup
-    assert "if(thumb){root.rotateY(-jointAngles[0]*Math.PI/180);}" in markup
+    assert '"fingerCapsules"' in markup
     assert "new THREE.CylinderGeometry(.48,.48,1.72,32)" in markup
     assert "capsuleIntersectsCylinder" not in markup
     assert "firstCylinderContact" not in markup
-    assert "[1.384,1.0,.72]" in markup
-    assert "[1.512,1.072,.768]" in markup
+    assert "new THREE.CapsuleGeometry(r,Math.max(.12,len-r*2),8,14),skin" in markup
 
 
 def test_anthropomorphic_hand_renderer_javascript_parses():
@@ -806,7 +1001,7 @@ def test_anthropomorphic_hand_renderer_javascript_parses():
 
 
 def test_planar_palm_uses_a_balanced_hand_proportion():
-    pose = visuals.dexterous_hand_pose("抓取")
+    pose = models.dexterous_hand_pose("抓取")
     joints = np.asarray(pose["arm_joints"])
     forward = joints[3] - joints[2]
     forward /= np.linalg.norm(forward)
@@ -827,7 +1022,7 @@ def test_anthropomorphic_hand_frames_the_whole_robot_group():
 
 
 def test_thin_palm_shell_spans_finger_width_without_becoming_a_thick_ellipsoid():
-    pose = visuals.dexterous_hand_pose("抓取")
+    pose = models.dexterous_hand_pose("抓取")
     joints = np.asarray(pose["arm_joints"])
     forward = joints[3] - joints[2]
     forward /= np.linalg.norm(forward)
@@ -844,11 +1039,16 @@ def test_app_omits_the_redundant_planar_distributed_sensing_dashboard():
     assert all(subheader.value != "多类型分布式光纤传感数据台" for subheader in app.subheader)
 
 
-def test_planar_grasp_groups_controls_and_visuals_side_by_side():
+def test_planar_grasp_groups_commands_animation_and_sliders_in_order():
     source = Path("app.py").read_text(encoding="utf-8")
 
-    assert "planar_controls, planar_display = st.columns([1, 2])" in source
-    assert source.index("with planar_display:") < source.index('"二维抓取：五指与掌心六路 FBG 波长漂移"')
+    hand_start = source.index("with hand_tab:")
+    command_start = source.index('st.markdown("#### 指令")', hand_start)
+    animation_start = source.index("visuals.planar_hand_animation_html(")
+    sliders_start = source.index('st.markdown("#### 姿态与目标")', hand_start)
+
+    assert command_start < sliders_start < animation_start
+    assert '"二维抓取：五指与掌心六路 FBG 波长漂移"' in source
 
 
 def test_standalone_finger_calibration_and_contact_inversion_live_in_the_calibration_tab():
@@ -863,7 +1063,7 @@ def test_standalone_finger_calibration_and_contact_inversion_live_in_the_calibra
 def test_app_groups_the_relevant_modules_and_removes_the_standalone_pipeline_tab():
     source = Path("app.py").read_text(encoding="utf-8")
 
-    assert '"④ FBG 标定与诊断"' in source
+    assert '"② FBG 标定与诊断"' in source
     assert '"⑦ 连续体形状重建"' in source
     assert '"⑧ 机械臂健康监测"' in source
     assert "with pipeline_tab:" not in source
@@ -882,7 +1082,7 @@ def test_app_exposes_the_complete_sensing_chain_pages_and_controls():
     labels = {slider.label for slider in app.slider}
 
     assert '"⑤ 多材质触觉识别"' in source
-    assert '"⑫ 解调器与实验任务"' in source
+    assert '"⑪ 解调器与实验任务"' in source
     assert {"故障通道", "握持力 (N)", "接触面积 (%)", "链路真实弯曲角 (°)"} <= labels
 
 
@@ -891,16 +1091,29 @@ def test_overview_contains_a_clickable_module_directory_and_operational_summary(
 
     assert "模块目录" in source
     assert "当前测量配置" in source
-    assert "components.html" in source
+    assert "st.iframe" in source
     assert "推荐实验路径" in source
+    assert "返回主页" in source
 
 
-def test_planar_task_commands_are_above_the_controls_and_view():
+def test_app_exposes_demo_navigation_preset_and_auto_play():
     source = Path("app.py").read_text(encoding="utf-8")
-    controls_start = source.index("planar_controls, planar_display = st.columns([1, 2])")
 
-    assert source.index("preset_rows =") < controls_start
-    assert source.index("task_left, task_right = st.columns(2)") < controls_start
+    assert "演示预设" in source
+    assert "平滑过渡动画" in source
+    assert "tab_jump_button" in source
+    assert "重置本页演示参数" in source
+    assert "下一步 → ⑧ 机械臂健康监测" in source
+
+
+def test_planar_task_commands_are_above_the_animation_and_sliders():
+    source = Path("app.py").read_text(encoding="utf-8")
+    hand_start = source.index("with hand_tab:")
+    command_start = source.index('st.markdown("#### 指令")', hand_start)
+    sliders_start = source.index('st.markdown("#### 姿态与目标")', hand_start)
+
+    assert command_start < sliders_start
+    assert sliders_start < source.index("visuals.planar_hand_animation_html(")
 
 
 def test_planar_task_closure_resolves_to_a_clickable_next_phase():
@@ -941,41 +1154,34 @@ def test_planar_arm_figure_uses_a_slimmer_arm_and_can_silhouette():
     can = next(trace for trace in figure.data if trace.name == "铝制饮料罐")
 
     assert (upper_arm.line.width, forearm.line.width, wrist.line.width) == (20, 16, 10)
-    assert max(can.x) - min(can.x) == pytest.approx(0.42)
+    assert max(can.x) - min(can.x) == pytest.approx(0.48)
 
 
 def test_planar_hand_pose_uses_a_half_width_palm_without_changing_arm_geometry():
-    opened = visuals.dexterous_hand_pose("伸手")
+    opened = models.dexterous_hand_pose("伸手")
 
     assert np.linalg.norm(opened["palm_outline"][1] - opened["palm_outline"][2]) == pytest.approx(0.67)
     assert np.linalg.norm(opened["arm_joints"][1] - opened["arm_joints"][0]) == pytest.approx(3.5)
 
 
-def test_planar_transition_figure_interpolates_the_previous_and_current_grasp_states():
-    previous = visuals.dexterous_hand_pose("伸手")
-    current = visuals.dexterous_hand_pose("抓取")
+def test_planar_animation_html_serialises_previous_and_current_states():
+    previous = models.dexterous_hand_pose("伸手")
+    current = models.dexterous_hand_pose("抓取")
 
-    figure = visuals.planar_hand_transition_figure(previous, current, previous["target"], current["target"], False, True)
+    markup = visuals.planar_hand_animation_html(previous, current, previous["target"], current["target"], False, True)
 
-    assert len(figure.frames) == 13
-    assert len(figure.data) >= 14
-
-
-def test_planar_transition_figure_keeps_a_fixed_view_scale():
-    pose = visuals.dexterous_hand_pose("抓取")
-    figure = visuals.planar_hand_transition_figure(pose, pose, pose["target"], pose["target"], True, True)
-
-    assert figure.layout.xaxis.range[1] - figure.layout.xaxis.range[0] == pytest.approx(12.0)
-    assert figure.layout.yaxis.range[1] - figure.layout.yaxis.range[0] == pytest.approx(9.0)
+    assert "previous" in markup and "current" in markup
+    assert "planar-grasp" in markup
 
 
 def test_planar_search_uses_the_same_native_transition_view_as_every_other_task_step():
     source = Path("app.py").read_text(encoding="utf-8")
-    display_start = source.index("with planar_display:")
-    display_context = source[display_start:source.index("st.session_state.two_d_previous_pose = pose", display_start)]
+    hand_start = source.index("with hand_tab:")
+    display_context = source[hand_start:source.index("st.session_state.two_d_previous_pose = display_pose", hand_start)]
 
     assert 'if st.session_state.two_d_task_phase == "寻找目标":' not in display_context
-    assert "visuals.planar_hand_transition_figure(" in display_context
+    assert "visuals.planar_hand_animation_html(" in display_context
+    assert "st.iframe(" in display_context
 
 
 
@@ -1020,6 +1226,8 @@ def test_arm_3d_and_foot_figures_are_renderable():
     foot = visuals.foot_schematic_figure(np.full(6, 30.0), "平地")
     assert len(foot.data) == 1
     assert len(foot.layout.shapes) == 6
+    with_cop = visuals.foot_schematic_figure(np.full(6, 30.0), "平地", np.array([1.5, 1.5]))
+    assert len(with_cop.data) == 2
 
 
 def test_foot_fbg_dashboard_shows_all_six_live_wavelength_channels_and_loads():
