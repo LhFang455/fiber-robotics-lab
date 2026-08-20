@@ -2,14 +2,20 @@
 
 一个本地运行的 Streamlit 教学实验室，覆盖点式/准分布式 FBG、分布式 Rayleigh/OFDR、φ-OTDR/DAS、Brillouin、Raman、偏振与干涉传感，并将它们用于机器人抓取、触觉、足底平衡、形状重建和结构健康监测。
 
-## 启动
+## 本地打开
+
+本项目为本地运行的 Streamlit 应用，GitHub 页面本身不承载在线演示。请在已安装 Python 3.10+ 的终端或 Conda 环境中执行：
 
 ```bash
+git clone git@github.com:2698685648/fiber-robotics-lab.git
+cd fiber-robotics-lab
 python -m pip install -r requirements.txt
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
-浏览器打开后，可在左侧统一设置温度变化、波长测量噪声和随机种子。推荐按以下路径体验：
+命令完成后，终端会显示本地访问地址；通常在浏览器打开 `http://localhost:8501` 即可。若已通过网页下载 ZIP，可解压后进入项目目录，从第三行命令开始执行。
+
+若 `streamlit` 命令不可用，请继续使用上面的 `python -m streamlit run app.py`；若 `python` 不可用，可按本机环境改用 `python3`。浏览器打开后，可在左侧统一设置温度变化、波长测量噪声和随机种子。推荐按以下路径体验：
 
 1. 在 FBG 标定与诊断页比较原始波长、温度补偿和冗余故障诊断。
 2. 在二维/三维抓取、多材质触觉与足底平衡页观察多通道接触信息。
