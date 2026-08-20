@@ -19,6 +19,9 @@ st.markdown("""<style>
 [data-testid="stMetric"] {background: #172a3a; border: 1px solid #315064; border-radius: 12px; padding: 14px; min-height: 112px;}
 [data-testid="stMetric"] * {color: #f5fbff !important;}
 [data-testid="stMetricDelta"] {color: #65d6c3 !important;}
+div.st-key-three_d_grasp_metrics [data-testid="stMetric"] {min-height: 64px; padding: 8px 12px;}
+div.st-key-three_d_grasp_metrics [data-testid="stMetricLabel"] {font-size: .82rem;}
+div.st-key-three_d_grasp_metrics [data-testid="stMetricValue"] {font-size: 1.75rem;}
 [data-testid="stAlert"] {border-radius: 12px;}
 div[data-testid="stTabs"] button {font-size: 1rem; font-weight: 600;}
 .element-container {margin-bottom: .55rem;}
@@ -850,12 +853,12 @@ with hand_3d_tab:
             st.success("三维 FBG 判定：温度补偿后，掌心、拇指及至少两根手指的触觉通道均达到握持阈值。")
         else:
             st.warning("三维传感判定：请将罐体移回抓取包络，并提高拇指和至少两根手指的屈曲。")
-        three_d_metrics_top = st.columns(2)
-        three_d_metrics_top[0].metric("FBG 触觉接触手指", f"{len(three_d_fbg_decision['contact_fingers'])} / 5")
-        three_d_metrics_top[1].metric("FBG 反演接触合力", f"{np.asarray(three_d_fbg_decision['contact_force_n']).sum():.2f} N")
-        three_d_metrics_bottom = st.columns(2)
-        three_d_metrics_bottom[0].metric("握持稳定度", f"{float(three_d_sensing['stability']) * 100:.0f}%")
-        three_d_metrics_bottom[1].metric("三维抓取状态", "FBG 已抓稳" if three_d_fbg_decision["is_grasped"] else "FBG 未抓稳")
+        with st.container(key="three_d_grasp_metrics"):
+            three_d_metrics = st.columns(4)
+            three_d_metrics[0].metric("FBG 触觉接触手指", f"{len(three_d_fbg_decision['contact_fingers'])} / 5")
+            three_d_metrics[1].metric("FBG 反演接触合力", f"{np.asarray(three_d_fbg_decision['contact_force_n']).sum():.2f} N")
+            three_d_metrics[2].metric("握持稳定度", f"{float(three_d_sensing['stability']) * 100:.0f}%")
+            three_d_metrics[3].metric("三维抓取状态", "FBG 已抓稳" if three_d_fbg_decision["is_grasped"] else "FBG 未抓稳")
         st.caption("拖动模型可旋转视角；滚轮缩放保持关闭。物体保持世界坐标，寻找程序移动手部抓取包络至目标。")
         st.info("青色发光线表示 FBG 封装/走线路径：肩—肘—腕为弯曲监测；掌部两条短线为掌心接触区域；每根手指上的分段线为指节触觉区域。青色只表示传感路径，不表示受力大小；接触后对应路径会变为黄色。")
         st.iframe(

@@ -1108,13 +1108,15 @@ def test_overview_describes_the_planar_grasp_as_six_fbg_channels():
     assert "五路 FBG 抓取判定" not in source
 
 
-def test_three_d_results_use_a_readable_two_column_metric_grid():
+def test_three_d_results_use_a_compact_single_row_metric_grid():
     source = Path("app.py").read_text(encoding="utf-8")
     three_d_start = source.index("with hand_3d_tab:")
     three_d_context = source[three_d_start:source.index("with shape_tab:", three_d_start)]
 
-    assert "three_d_metrics = st.columns(4)" not in three_d_context
-    assert three_d_context.count("st.columns(2)") >= 2
+    assert 'with st.container(key="three_d_grasp_metrics"):' in three_d_context
+    assert "three_d_metrics = st.columns(4)" in three_d_context
+    assert "div.st-key-three_d_grasp_metrics [data-testid=\"stMetric\"]" in source
+    assert "min-height: 64px" in source
 
 
 def test_app_uses_plotly_bar_figures_instead_of_streamlit_bar_charts():
