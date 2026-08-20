@@ -7,6 +7,7 @@ __pycache__/
 
 # 同目录下的非网站工作资料
 *_qa/
+docs/superpowers/plans/
 *.docx
 build_*.py
 finalize_disclosure.py
