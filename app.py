@@ -132,7 +132,7 @@ with overview_tab:
             (10, "解调器与实验任务", "波长流、滤波温补、控制输出与实验报告"),
         ]),
         ("机械交互与触觉", [
-            (2, "二维手部抓取", "平面姿态、接触与五路 FBG 抓取判定"),
+            (2, "二维手部抓取", "平面姿态、接触与五指＋掌心六路 FBG 抓取判定"),
             (3, "三维抓取传感", "独立三维接触、握持稳定度与手臂/手掌/手指光纤"),
             (4, "多材质触觉识别", "五指/掌心接触分布与材料模式分类"),
             (5, "足底平衡与步态", "六区载荷、温补 CoP 与地形/相位影响"),
@@ -480,7 +480,12 @@ with tactile_tab:
         st.warning(f"识别不一致：实际为 {material}，模型识别为 {material_diagnosis['material']}。接触模式扰动或噪声使分布偏离模板。")
     st.plotly_chart(visuals.material_probability_figure(material_diagnosis["probabilities"]), width="stretch")
     st.caption("识别概率：柱越高表示模型认为越像该材质；接触模式扰动或噪声会让概率摊平，甚至误判成其他材质。")
-    st.bar_chart({"五指接触力 (N)": material_touch["finger_touch_n"]})
+    st.plotly_chart(
+        visuals.sensor_bar_figure(
+            np.arange(1, 6), material_touch["finger_touch_n"], "五指接触力 (N)"
+        ),
+        width="stretch",
+    )
     st.caption("五指接触力柱状图：握持力与接触面积决定整体量级，材质决定分布形态。")
     st.caption("这是基于预设接触模式的分类教学模型，用于比较软硬、曲面和薄板造成的接触分布；识别概率来自余弦相似度的归一化指数，真实材质识别需要多次试验、不同握持力样本及训练/验证数据集。")
 
@@ -845,11 +850,12 @@ with hand_3d_tab:
             st.success("三维 FBG 判定：温度补偿后，掌心、拇指及至少两根手指的触觉通道均达到握持阈值。")
         else:
             st.warning("三维传感判定：请将罐体移回抓取包络，并提高拇指和至少两根手指的屈曲。")
-        three_d_metrics = st.columns(4)
-        three_d_metrics[0].metric("FBG 触觉接触手指", f"{len(three_d_fbg_decision['contact_fingers'])} / 5")
-        three_d_metrics[1].metric("FBG 反演接触合力", f"{np.asarray(three_d_fbg_decision['contact_force_n']).sum():.2f} N")
-        three_d_metrics[2].metric("握持稳定度", f"{float(three_d_sensing['stability']) * 100:.0f}%")
-        three_d_metrics[3].metric("三维抓取状态", "FBG 已抓稳" if three_d_fbg_decision["is_grasped"] else "FBG 未抓稳")
+        three_d_metrics_top = st.columns(2)
+        three_d_metrics_top[0].metric("FBG 触觉接触手指", f"{len(three_d_fbg_decision['contact_fingers'])} / 5")
+        three_d_metrics_top[1].metric("FBG 反演接触合力", f"{np.asarray(three_d_fbg_decision['contact_force_n']).sum():.2f} N")
+        three_d_metrics_bottom = st.columns(2)
+        three_d_metrics_bottom[0].metric("握持稳定度", f"{float(three_d_sensing['stability']) * 100:.0f}%")
+        three_d_metrics_bottom[1].metric("三维抓取状态", "FBG 已抓稳" if three_d_fbg_decision["is_grasped"] else "FBG 未抓稳")
         st.caption("拖动模型可旋转视角；滚轮缩放保持关闭。物体保持世界坐标，寻找程序移动手部抓取包络至目标。")
         st.info("青色发光线表示 FBG 封装/走线路径：肩—肘—腕为弯曲监测；掌部两条短线为掌心接触区域；每根手指上的分段线为指节触觉区域。青色只表示传感路径，不表示受力大小；接触后对应路径会变为黄色。")
         st.iframe(
@@ -885,13 +891,30 @@ with hand_3d_tab:
             "- **抓稳判定**：温度补偿后，掌心、拇指和至少两根其余手指的触觉条件共同满足时，才显示“FBG 已抓稳”。\n"
             "- **阅读顺序**：先看六路柱状分布，再对照下方指尖接触力、细分指节／掌心通道和稳定度。"
         )
-    st.bar_chart({"三维指尖接触力 (N)": np.asarray(three_d_sensing["contact_force_n"])})
+    st.plotly_chart(
+        visuals.sensor_bar_figure(
+            np.arange(1, 6), three_d_sensing["contact_force_n"], "三维指尖接触力 (N)"
+        ),
+        width="stretch",
+    )
     st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 16), three_d_sensing["tactile_fbg_shifts_nm"], "细分触觉 FBG：14 个指节＋第 15 路掌心"), width="stretch")
     tactile_left, tactile_right = st.columns(2)
     with tactile_left:
-        st.bar_chart({"手掌与五指触觉 (N)": np.r_[three_d_sensing["palm_touch_n"], three_d_sensing["contact_force_n"]]})
+        st.plotly_chart(
+            visuals.sensor_bar_figure(
+                np.arange(1, 7),
+                np.r_[three_d_sensing["palm_touch_n"], three_d_sensing["contact_force_n"]],
+                "手掌与五指触觉 (N)",
+            ),
+            width="stretch",
+        )
     with tactile_right:
-        st.bar_chart({"肩、肘、腕 FBG 弯曲应变 (με)": three_d_sensing["arm_bend_strain_ue"]})
+        st.plotly_chart(
+            visuals.sensor_bar_figure(
+                np.arange(1, 4), three_d_sensing["arm_bend_strain_ue"], "肩、肘、腕 FBG 弯曲应变 (με)"
+            ),
+            width="stretch",
+        )
     st.caption("通道对应关系：六路总览的第 1–5 路为拇指至小指综合通道，第 6 路为掌心；细分图第 1–14 路为指节，第 15 路为掌心。青色光纤覆盖肩—肘—腕、两条掌部路线及全部 14 个手指指节；下方指尖接触力、掌心＋五指触觉和手臂弯曲应变柱状图用于对照 FBG 读数判断接触与弯曲。")
     st.download_button(
         "下载三维抓取 FBG 读数 CSV",

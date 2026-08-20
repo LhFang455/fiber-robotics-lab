@@ -11,6 +11,11 @@ import fiber_robotics_sim.visuals as visuals
 
 FBG_SIMPLUS_TUTORIAL_EXPORT = """% Model: COMSOL tutorial\n% x solid.elogxx solid.elogyy solid.elogzz solid.sx solid.sy solid.sz T\n0.0000 0.0020 0.0001 -0.0002 100.0 20.0 -10.0 293.15\n0.0010 0.0010 0.0002 -0.0001 80.0 15.0 -8.0 294.15\n"""
 FBG_SIMPLUS_CSV_EXPORT = """position,exx,eyy,ezz,sxx,syy,szz,temperature\n0.0000,0.0020,0.0001,-0.0002,100.0,20.0,-10.0,293.15\n0.0010,0.0010,0.0002,-0.0001,80.0,15.0,-8.0,294.15\n"""
+APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
+
+
+def app_test() -> AppTest:
+    return AppTest.from_file(APP_PATH, default_timeout=10)
 
 
 def test_fbg_simplus_parser_reads_the_public_tutorial_column_order():
@@ -794,31 +799,31 @@ def test_arm_3d_figure_has_can_mesh_trace():
 
 
 def test_app_exposes_independent_thumb_control():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     assert any(slider.label == "拇指屈曲 (°)" for slider in app.slider)
 
 
 def test_app_exposes_can_position_controls():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     controls = {slider.label: slider for slider in app.slider}
     assert {"饮料罐水平位置", "饮料罐垂直位置"} <= controls.keys()
     assert controls["饮料罐水平位置"].disabled is False
 
 
 def test_app_exposes_the_stepwise_planar_find_grasp_and_place_actions():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     labels = {button.label for button in app.button}
     assert {"开始二维寻找与抓取任务", "执行下一步"} <= labels
 
 
 def test_app_keeps_the_planar_can_position_controls_for_world_targets():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     labels = {slider.label for slider in app.slider}
     assert {"饮料罐水平位置", "饮料罐垂直位置"} <= labels
 
 
 def test_app_exposes_shoulder_translation_controls():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     labels = {slider.label for slider in app.slider}
     assert {"肩部水平位移", "肩部垂直位移"} <= labels
 
@@ -1035,7 +1040,7 @@ def test_thin_palm_shell_spans_finger_width_without_becoming_a_thick_ellipsoid()
 
 
 def test_app_omits_the_redundant_planar_distributed_sensing_dashboard():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     assert all(subheader.value != "多类型分布式光纤传感数据台" for subheader in app.subheader)
 
 
@@ -1070,7 +1075,7 @@ def test_app_groups_the_relevant_modules_and_removes_the_standalone_pipeline_tab
 
 
 def test_app_exposes_basic_foot_and_arm_health_fbg_controls():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     labels = {slider.label for slider in app.slider}
 
     assert {"机械臂载荷 (N)", "局部异常位置 (mm)", "异常程度"} <= labels
@@ -1078,7 +1083,7 @@ def test_app_exposes_basic_foot_and_arm_health_fbg_controls():
 
 def test_app_exposes_the_complete_sensing_chain_pages_and_controls():
     source = Path("app.py").read_text(encoding="utf-8")
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     labels = {slider.label for slider in app.slider}
 
     assert '"⑤ 多材质触觉识别"' in source
@@ -1094,6 +1099,28 @@ def test_overview_contains_a_clickable_module_directory_and_operational_summary(
     assert "st.iframe" in source
     assert "推荐实验路径" in source
     assert "返回主页" in source
+
+
+def test_overview_describes_the_planar_grasp_as_six_fbg_channels():
+    source = Path("app.py").read_text(encoding="utf-8")
+
+    assert "五指＋掌心六路 FBG 抓取判定" in source
+    assert "五路 FBG 抓取判定" not in source
+
+
+def test_three_d_results_use_a_readable_two_column_metric_grid():
+    source = Path("app.py").read_text(encoding="utf-8")
+    three_d_start = source.index("with hand_3d_tab:")
+    three_d_context = source[three_d_start:source.index("with shape_tab:", three_d_start)]
+
+    assert "three_d_metrics = st.columns(4)" not in three_d_context
+    assert three_d_context.count("st.columns(2)") >= 2
+
+
+def test_app_uses_plotly_bar_figures_instead_of_streamlit_bar_charts():
+    source = Path("app.py").read_text(encoding="utf-8")
+
+    assert "st.bar_chart(" not in source
 
 
 def test_app_exposes_demo_navigation_preset_and_auto_play():
@@ -1117,7 +1144,7 @@ def test_planar_task_commands_are_above_the_animation_and_sliders():
 
 
 def test_planar_task_closure_resolves_to_a_clickable_next_phase():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     two_d_start = next(button for button in app.button if button.key == "start_two_d_grasp_task")
     two_d_start.click().run()
     for _ in range(3):
@@ -1130,14 +1157,14 @@ def test_planar_task_closure_resolves_to_a_clickable_next_phase():
 
 
 def test_default_two_d_grab_preset_closes_on_the_initial_target_envelope():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     next(button for button in app.button if button.key == "action_抓取").click().run()
 
     assert any("FBG 已抓稳" in alert.value for alert in app.success)
 
 
 def test_planar_release_phase_reenables_manual_commands_before_final_acknowledgement():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     get = lambda key: next(button for button in app.button if button.key == key)
     get("start_two_d_grasp_task").click().run()
     for _ in range(4):
@@ -1187,12 +1214,12 @@ def test_planar_search_uses_the_same_native_transition_view_as_every_other_task_
 
 
 def test_app_exposes_a_separate_3d_grasp_sensing_page():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     assert any(subheader.value == "三维抓取传感：独立接触与 FBG 读数" for subheader in app.subheader)
 
 
 def test_app_exposes_replaceable_sole_assembly_prediction_page():
-    app = AppTest.from_file("app.py").run(timeout=10)
+    app = app_test().run(timeout=10)
     headings = {subheader.value for subheader in app.subheader}
     assert "可更换式足底组件：二维装配状态预测" in headings
     assert "装配公差与阈值敏感性" in headings
@@ -1200,18 +1227,18 @@ def test_app_exposes_replaceable_sole_assembly_prediction_page():
 
 
 def test_foot_page_keeps_reassembly_visuals_in_an_auxiliary_expander():
-    app = AppTest.from_file("app.py").run(timeout=10)
+    app = app_test().run(timeout=10)
 
     assert "复装与结构说明（辅助）" in {item.label for item in app.expander}
 
 
 def test_app_exposes_a_3d_initial_pose_reset_button():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     assert any(button.label == "恢复三维初始姿态" for button in app.button)
 
 
 def test_app_exposes_a_stepwise_3d_search_grasp_and_release_flow():
-    app = AppTest.from_file("app.py").run()
+    app = app_test().run()
     labels = {button.label for button in app.button}
     assert {"开始三维寻找与抓取任务", "执行下一步"} <= labels
 
