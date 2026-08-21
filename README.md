@@ -73,7 +73,7 @@ python -m pytest tests/test_models.py -p no:cacheprovider
 
 ## 核心公式
 
-FBG 波长变化采用：$\Delta\lambda_B = \lambda_B[(1 - p_e)\varepsilon + k_T\Delta T]$。网站还以解析教学模型展示 Rayleigh/OFDR 连续应变、DAS 时空振动、Brillouin 频移、Raman 温度、Stokes 偏振态、Sagnac 相位与 EFPI 干涉谱。
+FBG 波长变化采用：Δλ<sub>B</sub> = λ<sub>B</sub>[(1 − p<sub>e</sub>)ε + k<sub>T</sub>ΔT]。网站还以解析教学模型展示 Rayleigh/OFDR 连续应变、DAS 时空振动、Brillouin 频移、Raman 温度、Stokes 偏振态、Sagnac 相位与 EFPI 干涉谱。
 
 ## 模型边界
 
