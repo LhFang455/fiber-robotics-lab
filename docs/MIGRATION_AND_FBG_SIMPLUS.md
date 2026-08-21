@@ -26,7 +26,7 @@
 在 macOS/Linux 终端中复制执行：
 
 ```bash
-git clone https://github.com/2698685648/fiber-robotics-lab.git
+git clone https://github.com/LhFang455/fiber-robotics-lab.git
 cd fiber-robotics-lab
 python3 -m venv .venv
 source .venv/bin/activate
@@ -40,7 +40,7 @@ python -m streamlit run app.py
 Windows PowerShell 中复制执行：
 
 ```powershell
-git clone https://github.com/2698685648/fiber-robotics-lab.git
+git clone https://github.com/LhFang455/fiber-robotics-lab.git
 cd fiber-robotics-lab
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -80,10 +80,10 @@ Windows 将第二行替换为：
 
 该方式适合演示网站快速公开访问。操作在网页完成：
 
-1. 确认 GitHub 仓库 `2698685648/fiber-robotics-lab` 的 `master` 已包含需要公开的提交。
+1. 确认 GitHub 仓库 `LhFang455/fiber-robotics-lab` 的 `master` 已包含需要公开的提交。
 2. 打开 [Streamlit Community Cloud](https://share.streamlit.io/)，使用 GitHub 账号登录。
 3. 选择 **Create app**，填写：
-   - Repository：`2698685648/fiber-robotics-lab`
+   - Repository：`LhFang455/fiber-robotics-lab`
    - Branch：`master`
    - Main file path：`app.py`
    - Python version：选择当前受支持的 Python 版本，例如 3.11 或 3.12。

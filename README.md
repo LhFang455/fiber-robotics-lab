@@ -7,7 +7,7 @@
 本项目为本地运行的 Streamlit 应用，GitHub 页面本身不承载在线演示。请在已安装 Python 3.10+ 的终端中执行；如使用虚拟环境，请先按所用工具的方式激活该环境。
 
 ```bash
-git clone https://github.com/2698685648/fiber-robotics-lab.git
+git clone https://github.com/LhFang455/fiber-robotics-lab.git
 cd fiber-robotics-lab
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
