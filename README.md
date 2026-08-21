@@ -4,18 +4,33 @@
 
 ## 本地打开
 
-本项目为本地运行的 Streamlit 应用，GitHub 页面本身不承载在线演示。请在已安装 Python 3.10+ 的终端中执行；如使用虚拟环境，请先按所用工具的方式激活该环境。
+本项目为本地运行的 Streamlit 应用，GitHub 页面本身不承载在线演示。请在已安装 Python 3.10+ 的终端中执行。以下给出使用内置 `venv` 的完整命令；若使用其他虚拟环境工具，只需按该工具的方式创建并激活环境，再执行对应代码块中的安装和启动命令。
+
+macOS/Linux：
 
 ```bash
 git clone https://github.com/LhFang455/fiber-robotics-lab.git
 cd fiber-robotics-lab
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-命令完成后，终端会显示本地访问地址；通常在浏览器打开 `http://localhost:8501` 即可。若已通过网页下载 ZIP，可解压后进入项目目录，从第三行命令开始执行。
+Windows PowerShell：
 
-不同虚拟环境工具只影响创建和激活步骤；环境激活后，上述安装、启动和测试命令相同。macOS/Linux 若没有 `python` 命令，可替换为 `python3`；Windows PowerShell 可使用 `py -3` 替代 `python`。浏览器打开后，可在左侧统一设置温度变化、波长测量噪声和随机种子。推荐按以下路径体验：
+```powershell
+git clone https://github.com/LhFang455/fiber-robotics-lab.git
+cd fiber-robotics-lab
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+命令完成后，终端会显示本地访问地址；通常在浏览器打开 `http://localhost:8501` 即可。若已通过网页下载 ZIP，可解压后进入项目目录，跳过 `git clone` 命令后继续执行。
+
+环境激活后，上述安装与启动命令在各平台一致。浏览器打开后，可在左侧统一设置温度变化、波长测量噪声和随机种子。推荐按以下路径体验：
 
 ### 已验证环境与测试条件
 

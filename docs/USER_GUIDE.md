@@ -20,15 +20,33 @@
 
 ### 2.2 安装与启动
 
+以下以 Python 内置 `venv` 为例，给出从下载到启动的完整命令。若使用其他虚拟环境工具，只需按该工具的方式创建并激活环境，再执行对应代码块中的安装与启动命令。
+
+macOS/Linux：
+
 ```bash
+git clone https://github.com/LhFang455/fiber-robotics-lab.git
 cd fiber-robotics-lab
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+Windows PowerShell：
+
+```powershell
+git clone https://github.com/LhFang455/fiber-robotics-lab.git
+cd fiber-robotics-lab
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
 浏览器会自动打开 `http://localhost:8501`。如果没自动打开，手动访问这个地址即可。
 
-macOS/Linux 若没有 `python` 命令，可使用 `python3`；Windows PowerShell 可使用 `py -3`。虚拟环境的具体激活命令请按所用工具执行。
+环境激活后，安装与启动命令在各平台一致。
 
 ### 2.3 先跑一遍推荐路径
 
