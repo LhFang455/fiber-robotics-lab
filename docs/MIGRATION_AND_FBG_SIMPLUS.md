@@ -18,8 +18,10 @@
 准备以下软件：
 
 - Git；
-- Python 3.10、3.11 或 3.12；
+- Python 3.10+；本机已验证 macOS 26.6.2（Apple Silicon）与 Python 3.13.9。Windows 与 Linux 具备运行条件，但尚未在真实机器完成验收；
 - 能访问 GitHub 的网络。
+
+下列 `.venv` 为 Python 内置虚拟环境示例；若使用其他虚拟环境工具，请先按该工具方式激活环境，再从安装依赖步骤继续。环境激活后，各工具的安装、启动和测试命令相同。
 
 在 macOS/Linux 终端中复制执行：
 
@@ -30,7 +32,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 启动后，终端会显示本地访问地址；通常为 `http://localhost:8501`。停止网站可在同一终端按 `Ctrl+C`。
@@ -44,7 +46,7 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 若 PowerShell 禁止激活脚本，可仅对当前用户执行一次：
@@ -63,7 +65,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 git pull --ff-only origin master
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 Windows 将第二行替换为：

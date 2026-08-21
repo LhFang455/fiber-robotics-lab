@@ -14,18 +14,21 @@
 
 ### 2.1 环境要求
 
-- Python 3.10+（本仓库在 3.12/3.13 上验证过）
+- Python 3.10+；本机已验证 macOS 26.6.2（Apple Silicon）与 Python 3.13.9。Windows 与 Linux 具备运行条件，但尚未在真实机器完成验收。
 - 依赖：`numpy`、`plotly`、`streamlit`、`pytest`（测试用）
+- 虚拟环境：可使用任意 Python 虚拟环境工具；差异仅在创建和激活方式，激活后的安装、启动和测试命令相同。
 
 ### 2.2 安装与启动
 
 ```bash
 cd fiber-robotics-lab
 python -m pip install -r requirements.txt
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 浏览器会自动打开 `http://localhost:8501`。如果没自动打开，手动访问这个地址即可。
+
+macOS/Linux 若没有 `python` 命令，可使用 `python3`；Windows PowerShell 可使用 `py -3`。虚拟环境的具体激活命令请按所用工具执行。
 
 ### 2.3 先跑一遍推荐路径
 
@@ -175,7 +178,7 @@ streamlit run app.py
 ## 8. 常见问题
 
 **Q：启动后页面空白/报错？**
-先确认依赖装全：`python -m pip install -r requirements.txt`，再 `streamlit run app.py`。
+先确认依赖装全：`python -m pip install -r requirements.txt`，再 `python -m streamlit run app.py`。
 
 **Q：跨页“下一步”按钮点了没反应？**
 这些按钮通过页面内脚本点击标签，需要保持浏览器默认设置（允许脚本）；如果仍不工作，请手动点顶部标签。
@@ -188,8 +191,10 @@ streamlit run app.py
 
 **Q：跑测试？**
 ```bash
-pytest tests/test_models.py -p no:cacheprovider
+python -m pytest tests/test_models.py -p no:cacheprovider
 ```
+
+请在项目根目录、已激活 Python 环境且已安装 `requirements.txt` 后执行。该测试不依赖浏览器或网络，但要求 `fiber_robotics_sim/vendor/three.min.js` 等仓库文件完整可用。
 
 ## 9. 代码结构（想改代码时看这里）
 

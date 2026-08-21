@@ -4,10 +4,10 @@
 
 ## 本地打开
 
-本项目为本地运行的 Streamlit 应用，GitHub 页面本身不承载在线演示。请在已安装 Python 3.10+ 的终端或 Conda 环境中执行：
+本项目为本地运行的 Streamlit 应用，GitHub 页面本身不承载在线演示。请在已安装 Python 3.10+ 的终端中执行；如使用虚拟环境，请先按所用工具的方式激活该环境。
 
 ```bash
-git clone git@github.com:2698685648/fiber-robotics-lab.git
+git clone https://github.com/2698685648/fiber-robotics-lab.git
 cd fiber-robotics-lab
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
@@ -15,7 +15,17 @@ python -m streamlit run app.py
 
 命令完成后，终端会显示本地访问地址；通常在浏览器打开 `http://localhost:8501` 即可。若已通过网页下载 ZIP，可解压后进入项目目录，从第三行命令开始执行。
 
-若 `streamlit` 命令不可用，请继续使用上面的 `python -m streamlit run app.py`；若 `python` 不可用，可按本机环境改用 `python3`。浏览器打开后，可在左侧统一设置温度变化、波长测量噪声和随机种子。推荐按以下路径体验：
+不同虚拟环境工具只影响创建和激活步骤；环境激活后，上述安装、启动和测试命令相同。macOS/Linux 若没有 `python` 命令，可替换为 `python3`；Windows PowerShell 可使用 `py -3` 替代 `python`。浏览器打开后，可在左侧统一设置温度变化、波长测量噪声和随机种子。推荐按以下路径体验：
+
+### 已验证环境与测试条件
+
+本机已验证环境为 macOS 26.6.2（Apple Silicon）、Python 3.13.9、NumPy 2.4.6、Plotly 6.7.0、Streamlit 1.58.0、pytest 9.0.3。Windows 与 Linux 具备运行条件，但尚未在真实机器完成验收。
+
+在项目根目录、已激活 Python 环境且已安装 `requirements.txt` 的前提下，可执行下列测试；测试不依赖浏览器或网络，但要求仓库中的本地 Three.js 文件保持完整：
+
+```bash
+python -m pytest tests/test_models.py -p no:cacheprovider
+```
 
 1. 在 FBG 标定与诊断页比较原始波长、温度补偿和冗余故障诊断。
 2. 在二维/三维抓取、多材质触觉与足底平衡页观察多通道接触信息。
