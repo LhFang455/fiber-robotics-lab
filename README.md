@@ -67,9 +67,9 @@ python -m pytest tests/test_models.py -p no:cacheprovider
 
 标签顺序即推荐学习顺序：先基础标定，再机械交互与触觉，然后连续体/结构/分布式/偏振，最后用解调器集成；装配校验与 FBG-SimPlus 兼容作为辅助工具。
 
-## 用户指南（新手）
+## 用户指南
 
-面向新手的详细说明书（界面导航、逐页操作、演示功能速查、常见问题）见 [用户指南](docs/USER_GUIDE.md)。
+界面导航、逐页操作、演示功能速查和常见问题见 [用户指南](docs/USER_GUIDE.md)。
 
 ## 核心公式
 
