@@ -1,0 +1,49 @@
+name: Publish release0.2.0
+
+on:
+  push:
+    branches: [master]
+    paths: [.github/workflows/release-v0.2.0.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.2.0
+          persist-credentials: false
+      - name: Verify frozen release commit
+        run: test "$(git rev-parse HEAD)" = "495838bcdafbde74d27cc010c342fd319c65a0fa"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -r requirements-verified.txt
+      - run: ruff check app.py fiber_robotics_sim tests
+      - run: python -m pytest tests -p no:cacheprovider
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.2.0
+          persist-credentials: false
+      - name: Publish verified snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          gh release create v0.2.0
+          --verify-tag
+          --title release0.2.0
+          --notes-file docs/releases/v0.2.0.md
+          --latest
