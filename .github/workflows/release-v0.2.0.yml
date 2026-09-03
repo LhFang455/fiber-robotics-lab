@@ -1,4 +1,4 @@
-name: Publish release0.2.0
+name: Publish v0.2.0
 
 on:
   push:
@@ -41,9 +41,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: >-
-          gh release create v0.2.0
-          --verify-tag
-          --title release0.2.0
-          --notes-file docs/releases/v0.2.0.md
-          --latest
+        run: |
+          if gh release view v0.2.0 --json body --jq '.body' > /tmp/release-notes.md; then
+            sed -i '1s/^# release0.2.0$/# v0.2.0/' /tmp/release-notes.md
+            gh release edit v0.2.0 --title v0.2.0 --notes-file /tmp/release-notes.md
+          else
+            sed '1s/^# release0.2.0$/# v0.2.0/' docs/releases/v0.2.0.md > /tmp/release-notes.md
+            gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file /tmp/release-notes.md --latest
+          fi
+          test "$(gh release view v0.2.0 --json name --jq '.name')" = 'v0.2.0'
