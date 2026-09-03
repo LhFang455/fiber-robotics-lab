@@ -49,6 +49,14 @@ def test_fbg_simplus_parser_accepts_csv_after_skipping_a_header_and_normalises_i
     ]
 
 
+def test_fbg_simplus_parser_rejects_more_than_the_supported_sample_count():
+    row = "0 0 0 0 0 0 0 293.15"
+    text = "\n".join(row for _ in range(models.MAX_FBG_SIMPLUS_ROWS + 1))
+
+    with pytest.raises(ValueError, match="采样行数"):
+        models.parse_fbg_simplus_comsol_export(text)
+
+
 def test_fbg_simplus_input_figure_exposes_strain_stress_and_temperature():
     parsed_export = {
         "position_m": np.array([0.0, .001]),
@@ -61,6 +69,17 @@ def test_fbg_simplus_input_figure_exposes_strain_stress_and_temperature():
 
     assert [trace.name for trace in figure.data] == ["纵向应变 εxx", "横向应力 σy / σz", "温度"]
     assert np.array_equal(figure.data[0].x, np.array([0.0, 1.0]))
+
+
+def test_fbg_simplus_quality_summary_quantifies_spacing_and_column_ranges():
+    parsed = models.parse_fbg_simplus_comsol_export(FBG_SIMPLUS_TUTORIAL_EXPORT)
+
+    summary = models.summarise_fbg_simplus_input(parsed)
+
+    assert summary["position_span_mm"] == pytest.approx(1.0)
+    assert summary["minimum_spacing_mm"] == pytest.approx(1.0)
+    assert summary["spacing_cv_percent"] == pytest.approx(0.0)
+    assert summary["column_ranges"]["温度 K"] == pytest.approx((293.15, 294.15))
 
 
 def test_app_exposes_the_fbg_simplus_compatibility_module_and_attribution():
@@ -84,6 +103,42 @@ def test_app_exposes_the_fbg_simplus_compatibility_module_and_attribution():
     assert "Skip Rows" in source
     assert "Path Distance Input Units" in source
     assert "Generate" in source
+
+
+def test_fbg_simplus_page_can_load_a_builtin_example_without_external_files():
+    app = app_test().run()
+
+    app.button(key="load_fbg_simplus_example").click().run()
+
+    assert not app.exception
+    assert app.session_state["fbg_simplus_use_example"] is True
+    assert any("内置示例已通过格式检查" in item.value for item in app.success)
+    labels = {button.label for button in app.get("download_button")}
+    assert "下载内置示例的标准化八列文本" in labels
+    assert next(item.value for item in app.metric if item.label == "位置跨度").endswith("mm")
+    assert next(item.value for item in app.metric if item.label == "采样间隔变异").endswith("%")
+
+
+def test_fbg_simplus_builtin_error_exercise_explains_why_the_input_fails():
+    app = app_test().run()
+
+    app.selectbox(key="fbg_simplus_example").set_value("位置重复（应失败）")
+    app.button(key="load_fbg_simplus_example").click().run()
+
+    assert not app.exception
+    assert any("严格递增" in item.value for item in app.error)
+    assert any("预期结果：拒绝位置重复的数据" in item.value for item in app.caption)
+
+
+def test_fbg_simplus_builtin_csv_exercise_sets_header_skip_and_passes():
+    app = app_test().run()
+
+    app.selectbox(key="fbg_simplus_example").set_value("CSV 含表头")
+    app.button(key="load_fbg_simplus_example").click().run()
+
+    assert not app.exception
+    assert app.number_input(key="fbg_simplus_skip_rows").value == 1
+    assert any("识别为逗号（CSV）" in item.value for item in app.success)
 
 
 def test_fbg_shift_combines_strain_and_temperature():
@@ -362,12 +417,43 @@ def test_demodulation_chain_filters_and_temperature_compensates_a_control_signal
     assert result["estimated_angle_deg"] == pytest.approx(55.0, abs=4.0)
 
 
+def test_demodulation_chain_quantifies_filter_delay_noise_and_threshold_consistency():
+    unfiltered = models.simulate_demodulation_chain(
+        35.0, 15.0, 100, 0.020, 4, filter_window=1, control_threshold_deg=35.0
+    )
+    filtered = models.simulate_demodulation_chain(
+        35.0, 15.0, 100, 0.020, 4, filter_window=15, control_threshold_deg=35.0
+    )
+
+    assert filtered["filtered_noise_rms_nm"] < unfiltered["filtered_noise_rms_nm"]
+    assert filtered["filter_delay_ms"] == pytest.approx(70.0)
+    assert 0.0 <= filtered["command_consistency_percent"] <= 100.0
+    assert filtered["control_margin_deg"] == pytest.approx(
+        filtered["estimated_angle_deg"] - 35.0
+    )
+
+
+def test_demodulation_chain_rejects_an_even_filter_window():
+    with pytest.raises(ValueError, match="奇数"):
+        models.simulate_demodulation_chain(
+            35.0, 0.0, 100, 0.01, 4, filter_window=4
+        )
+
+
 def test_demodulation_figure_uses_time_as_a_real_plot_axis():
     result = models.simulate_demodulation_chain(55.0, 15.0, 100, 0.010, 4)
     figure = visuals.demodulation_figure(result)
 
     assert len(figure.data) == 3
     assert np.array_equal(figure.data[0].x, result["time_s"])
+
+
+def test_optical_response_scan_separates_sagnac_and_efpi_transfer_relations():
+    figure = visuals.optical_response_scan_figure(120.0, 28.0)
+
+    assert [trace.name for trace in figure.data] == ["Sagnac 相位差", "EFPI 腔长变化"]
+    assert figure.layout.xaxis.title.text == "角速度 (°/s)"
+    assert figure.layout.xaxis2.title.text == "压力 (MPa)"
 
 
 def test_sensor_frame_keeps_raw_compensated_and_quality_information_together():
@@ -1068,9 +1154,9 @@ def test_standalone_finger_calibration_and_contact_inversion_live_in_the_calibra
 def test_app_groups_the_relevant_modules_and_removes_the_standalone_pipeline_tab():
     source = Path("app.py").read_text(encoding="utf-8")
 
-    assert '"② FBG 标定与诊断"' in source
-    assert '"⑦ 连续体形状重建"' in source
-    assert '"⑧ 机械臂健康监测"' in source
+    assert '"② FBG 基础与解调"' in source
+    assert '"⑤ 形状与结构监测"' in source
+    assert '"连续体形状", "结构健康"' in source
     assert "with pipeline_tab:" not in source
 
 
@@ -1086,8 +1172,8 @@ def test_app_exposes_the_complete_sensing_chain_pages_and_controls():
     app = app_test().run()
     labels = {slider.label for slider in app.slider}
 
-    assert '"⑤ 多材质触觉识别"' in source
-    assert '"⑪ 解调器与实验任务"' in source
+    assert '"③ 手部抓取与触觉"' in source
+    assert '"弯曲标定与诊断", "解调与实验任务"' in source
     assert {"故障通道", "握持力 (N)", "接触面积 (%)", "链路真实弯曲角 (°)"} <= labels
 
 
@@ -1104,7 +1190,7 @@ def test_overview_contains_a_clickable_module_directory_and_operational_summary(
 def test_overview_describes_the_planar_grasp_as_six_fbg_channels():
     source = Path("app.py").read_text(encoding="utf-8")
 
-    assert "五指＋掌心六路 FBG 抓取判定" in source
+    assert "二维与三维抓取、六路接触感知和材质识别" in source
     assert "五路 FBG 抓取判定" not in source
 
 
@@ -1117,6 +1203,26 @@ def test_three_d_results_use_a_compact_single_row_metric_grid():
     assert "three_d_metrics = st.columns(4)" in three_d_context
     assert "div.st-key-three_d_grasp_metrics [data-testid=\"stMetric\"]" in source
     assert "min-height: 64px" in source
+
+
+def test_three_d_layout_keeps_commands_and_model_in_the_primary_split():
+    source = Path("app.py").read_text(encoding="utf-8")
+    three_d_start = source.index("with hand_3d_tab:")
+    three_d_context = source[three_d_start:source.index("with shape_tab:", three_d_start)]
+    display_start = three_d_context.index("with display:")
+    display_context = three_d_context[display_start:]
+
+    assert 'controls, display = st.columns([1.15, 2.1], gap="large")' in three_d_context
+    assert "task_left, task_right = st.columns(2)" not in three_d_context
+    assert 'with st.expander("高级姿态与目标参数", expanded=False):' in three_d_context
+    assert 'st.markdown("#### 三维交互视图")' in display_context
+    assert "height=560" in display_context
+    assert display_context.index("st.iframe(") < display_context.index(
+        'with st.container(key="three_d_grasp_metrics"):'
+    )
+    assert display_context.index("st.iframe(") < display_context.index(
+        'with st.expander("查看抓稳条件与当前读数"'
+    )
 
 
 def test_app_uses_plotly_bar_figures_instead_of_streamlit_bar_charts():
@@ -1132,7 +1238,7 @@ def test_app_exposes_demo_navigation_preset_and_auto_play():
     assert "平滑过渡动画" in source
     assert "tab_jump_button" in source
     assert "重置本页演示参数" in source
-    assert "下一步 → ⑧ 机械臂健康监测" in source
+    assert "下一步 → 结构健康" in source
 
 
 def test_planar_task_commands_are_above_the_animation_and_sliders():
@@ -1167,7 +1273,9 @@ def test_default_two_d_grab_preset_closes_on_the_initial_target_envelope():
 
 def test_planar_release_phase_reenables_manual_commands_before_final_acknowledgement():
     app = app_test().run()
-    get = lambda key: next(button for button in app.button if button.key == key)
+    def get(key):
+        return next(button for button in app.button if button.key == key)
+
     get("start_two_d_grasp_task").click().run()
     for _ in range(4):
         get("advance_two_d_grasp_task").click().run()

@@ -401,6 +401,46 @@ def demodulation_figure(result: dict) -> go.Figure:
     return figure
 
 
+def optical_response_scan_figure(coil_length_m: float, cavity_um: float) -> go.Figure:
+    """Compare the independent Sagnac and EFPI input-output relations."""
+    angular_rates = np.linspace(-180.0, 180.0, 73)
+    phase_shifts = [
+        models.simulate_sagnac_gyro(rate, coil_length_m)["phase_shift_rad"]
+        for rate in angular_rates
+    ]
+    pressures = np.linspace(0.0, 1.0, 51)
+    cavity_changes = [
+        (
+            models.simulate_efpi_pressure(pressure, cavity_um)["effective_cavity_um"]
+            - cavity_um
+        )
+        * 1000.0
+        for pressure in pressures
+    ]
+    figure = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=("Sagnac：旋转到相位", "EFPI：压力到腔长"),
+        horizontal_spacing=.14,
+    )
+    figure.add_scatter(
+        x=angular_rates, y=phase_shifts, mode="lines", name="Sagnac 相位差",
+        line={"color": COLORS["truth"], "width": 3}, row=1, col=1,
+    )
+    figure.add_scatter(
+        x=pressures, y=cavity_changes, mode="lines", name="EFPI 腔长变化",
+        line={"color": COLORS["estimate"], "width": 3}, row=1, col=2,
+    )
+    figure.update_layout(
+        title="两类干涉传感的独立响应曲线", template="plotly_dark", height=420,
+        legend={"orientation": "h", "y": 1.16}, margin={"l": 20, "r": 20, "t": 90, "b": 30},
+    )
+    figure.update_xaxes(title_text="角速度 (°/s)", row=1, col=1)
+    figure.update_yaxes(title_text="相位差 (rad)", row=1, col=1)
+    figure.update_xaxes(title_text="压力 (MPa)", row=1, col=2)
+    figure.update_yaxes(title_text="腔长变化 (nm)", row=1, col=2)
+    return figure
+
+
 def distributed_curve_figure(result: dict, mechanism: str) -> go.Figure:
     """Render a spatial distributed-sensing curve using the primary available quantity."""
     x = np.asarray(result["position_mm"], dtype=float)
@@ -1000,6 +1040,7 @@ def arm_health_figure(result: dict, diagnosis: dict) -> go.Figure:
     """Show an arm-link FBG array and its localised structural-health indication."""
     positions = np.asarray(result["sensor_positions_mm"], dtype=float)
     strain = np.asarray(result["strain"], dtype=float) * 1e6
+    localization_valid = bool(diagnosis.get("localization_valid", True))
     suspected = float(diagnosis["suspected_location_mm"])
     uncertainty = float(diagnosis.get("location_uncertainty_mm", 60.0))
     figure = go.Figure()
@@ -1012,13 +1053,18 @@ def arm_health_figure(result: dict, diagnosis: dict) -> go.Figure:
         text=[f"FBG {index + 1}<br>{value:.0f} με" for index, value in enumerate(strain)],
         textposition="top center", marker={"size": 18, "color": strain, "colorscale": "YlOrRd", "showscale": True, "colorbar": {"title": "应变 (με)"}},
     )
-    figure.add_vrect(
-        x0=suspected - uncertainty, x1=suspected + uncertainty,
-        fillcolor="rgba(255,77,79,.10)", line_width=0,
+    if localization_valid:
+        figure.add_vrect(
+            x0=suspected - uncertainty, x1=suspected + uncertainty,
+            fillcolor="rgba(255,77,79,.10)", line_width=0,
+        )
+        figure.add_vline(x=suspected, line_dash="dash", line_color="#ff4d4f", annotation_text=f"可疑位置 {suspected:.0f} ± {uncertainty:.0f} mm")
+    title = (
+        f"机械臂结构健康：可疑位置 {suspected:.0f} ± {uncertainty:.0f} mm"
+        if localization_valid else "机械臂结构健康：未形成有效异常定位"
     )
-    figure.add_vline(x=suspected, line_dash="dash", line_color="#ff4d4f", annotation_text=f"可疑位置 {suspected:.0f} ± {uncertainty:.0f} mm")
     figure.update_layout(
-        title=f"机械臂结构健康：可疑位置 {suspected:.0f} ± {uncertainty:.0f} mm",
+        title=title,
         template="plotly_dark", height=360, xaxis_title="构件长度 (mm)",
         yaxis={"visible": False, "range": [-1.0, 1.8]}, margin={"l": 20, "r": 70, "t": 55, "b": 35},
     )

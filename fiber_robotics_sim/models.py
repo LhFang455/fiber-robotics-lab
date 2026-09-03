@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import numpy as np
 
 
+MAX_FBG_SIMPLUS_ROWS = 100_000
+
+
 def parse_fbg_simplus_comsol_export(
     text: str, delimiter: str = "自动识别", skip_rows: int = 0
 ) -> dict[str, np.ndarray | int | str]:
@@ -25,6 +28,8 @@ def parse_fbg_simplus_comsol_export(
     data_lines = [line.strip() for line in source_lines if line.strip() and not line.lstrip().startswith(("%", "#"))]
     if not data_lines:
         raise ValueError("FBG-SimPlus 兼容输入未包含数据行")
+    if len(data_lines) > MAX_FBG_SIMPLUS_ROWS:
+        raise ValueError(f"FBG-SimPlus 兼容输入的采样行数不能超过 {MAX_FBG_SIMPLUS_ROWS}")
     selected_delimiter = delimiter
     if delimiter == "自动识别":
         first_line = data_lines[0]
@@ -60,6 +65,33 @@ def fbg_simplus_normalised_text(result: dict[str, np.ndarray | int | str]) -> st
     """Write validated data as the whitespace-separated eight-column input FBG-SimPlus reads."""
     values = np.asarray(result["input_values"], dtype=float)
     return "\n".join(" ".join(f"{value:.12g}" for value in row) for row in values) + "\n"
+
+
+def summarise_fbg_simplus_input(
+    result: dict[str, np.ndarray | int | str],
+) -> dict[str, float | dict[str, tuple[float, float]]]:
+    """Summarise spacing and numeric ranges without inferring physical validity."""
+    values = np.asarray(result["input_values"], dtype=float)
+    spacing_mm = np.diff(values[:, 0]) * 1000.0
+    mean_spacing = float(np.mean(spacing_mm)) if len(spacing_mm) else 0.0
+    spacing_cv = (
+        float(np.std(spacing_mm) / mean_spacing * 100.0)
+        if len(spacing_mm) and mean_spacing > 0.0
+        else 0.0
+    )
+    labels = (
+        "位置 m", "εxx", "εyy", "εzz", "σxx Pa", "σyy Pa", "σzz Pa", "温度 K",
+    )
+    return {
+        "position_span_mm": float((values[-1, 0] - values[0, 0]) * 1000.0),
+        "minimum_spacing_mm": float(np.min(spacing_mm)) if len(spacing_mm) else 0.0,
+        "maximum_spacing_mm": float(np.max(spacing_mm)) if len(spacing_mm) else 0.0,
+        "spacing_cv_percent": spacing_cv,
+        "column_ranges": {
+            label: (float(np.min(values[:, index])), float(np.max(values[:, index])))
+            for index, label in enumerate(labels)
+        },
+    }
 
 def next_grasp_task_phase(current_phase: str, grasp_verified: bool) -> str:
     """Advance one observable grasp-task step shared by the 2D and 3D pages.
@@ -220,31 +252,60 @@ def classify_tactile_material(finger_touch_n: np.ndarray, palm_touch_n: float) -
     }
 
 
+def estimate_tactile_touch(
+    wavelength_shifts_nm: np.ndarray, temperature_change_c: float
+) -> np.ndarray:
+    """从六路温度补偿 FBG 波长读数反演五指与掌心接触力。"""
+    shifts = np.asarray(wavelength_shifts_nm, dtype=float)
+    if shifts.shape != (6,):
+        raise ValueError("触觉接触力反演需要六路 FBG 读数")
+    strain = _strain_from_shift(shifts, temperature_change_c)
+    return np.maximum(0.0, strain / TACTILE_TOUCH_STRAIN_PER_N)
+
+
 def simulate_demodulation_chain(
     bend_angle_deg: float,
     temperature_change_c: float,
     sample_rate_hz: int,
     noise_nm: float,
     seed: int,
-) -> dict[str, np.ndarray | float]:
+    filter_window: int = 5,
+    control_threshold_deg: float = 35.0,
+) -> dict[str, np.ndarray | float | str]:
     """Produce a short raw-to-filtered-to-compensated FBG teaching data stream."""
+    if filter_window < 1 or filter_window % 2 == 0:
+        raise ValueError("滤波窗口必须为正奇数")
     count = max(20, int(sample_rate_hz * 2))
     time_s = np.arange(count) / sample_rate_hz
     strain = np.deg2rad(bend_angle_deg) / 80.0
     clean = float(fbg_wavelength_shift_nm(np.array([strain]), temperature_change_c)[0])
     raw = clean + add_gaussian_noise(np.zeros(count), noise_nm, seed)
-    kernel = np.ones(5) / 5.0
-    filtered = np.convolve(np.pad(raw, (2, 2), mode="edge"), kernel, mode="valid")
+    half_window = filter_window // 2
+    kernel = np.ones(filter_window) / filter_window
+    filtered = np.convolve(
+        np.pad(raw, (half_window, half_window), mode="edge"), kernel, mode="valid"
+    )
     thermal_shift = float(fbg_wavelength_shift_nm(np.array([0.0]), temperature_change_c)[0])
     compensated = filtered - thermal_shift
     estimated = estimate_finger_angle_deg(compensated, 80.0, 1.0, 0.0)
+    sample_angles = np.rad2deg(_strain_from_shift(compensated, 0.0) * 80.0)
+    expected_closed = bend_angle_deg >= control_threshold_deg
+    sample_closed = sample_angles >= control_threshold_deg
+    consistency = float(np.mean(sample_closed == expected_closed) * 100.0)
+    raw_noise_rms = float(np.sqrt(np.mean((raw - clean) ** 2)))
+    filtered_noise_rms = float(np.sqrt(np.mean((filtered - clean) ** 2)))
     return {
         "time_s": time_s,
         "raw_wavelength_nm": raw,
         "filtered_wavelength_nm": filtered,
         "compensated_wavelength_nm": compensated,
         "estimated_angle_deg": estimated,
-        "control_command": "闭合" if estimated >= 35.0 else "张开",
+        "raw_noise_rms_nm": raw_noise_rms,
+        "filtered_noise_rms_nm": filtered_noise_rms,
+        "filter_delay_ms": (filter_window - 1) / (2.0 * sample_rate_hz) * 1000.0,
+        "control_margin_deg": estimated - control_threshold_deg,
+        "command_consistency_percent": consistency,
+        "control_command": "闭合" if estimated >= control_threshold_deg else "张开",
     }
 
 
@@ -1442,8 +1503,10 @@ def simulate_sagnac_gyro(angular_rate_deg_s: float, coil_length_m: float) -> dic
     area_m2 = np.pi * radius_m ** 2
     turns = max(1.0, coil_length_m / (2 * np.pi * radius_m))
     angular_rate_rad_s = np.deg2rad(angular_rate_deg_s)
-    phase = abs(8 * np.pi * area_m2 * turns * angular_rate_rad_s / (1.55e-6 * 299_792_458.0))
-    return {"phase_shift_rad": float(phase), "estimated_rate_deg_s": float(angular_rate_deg_s)}
+    phase_per_rate = 8 * np.pi * area_m2 * turns / (1.55e-6 * 299_792_458.0)
+    phase = phase_per_rate * angular_rate_rad_s
+    estimated_rate = np.rad2deg(phase / phase_per_rate)
+    return {"phase_shift_rad": float(phase), "estimated_rate_deg_s": float(estimated_rate)}
 
 
 def simulate_efpi_pressure(pressure_mpa: float, cavity_um: float) -> dict[str, np.ndarray | float]:
