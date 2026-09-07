@@ -352,7 +352,7 @@ def simulate_dynamic_skin_event(
         "threshold_margin": float(threshold_margin),
         "alert": alert,
         "status": "滑移风险" if alert else "稳定",
-        "rule": "剪切/法向力比超过阈值，且压力质心速度超过 2 mm/s。",
+        "rule": "记录 20% 后的稳定接触窗口内，剪切/法向力比峰值超过阈值，且压力质心速度绝对值峰值超过 2 mm/s；不要求同一时刻越阈。",
         "boundary": "告警阈值用于教学对照，必须用目标材料、封装和采样链实测数据重新标定。",
     }
 

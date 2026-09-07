@@ -6,11 +6,14 @@ import csv
 import io
 
 import numpy as np
+# Finish pandas initialization before Plotly inspects it during overlapping reruns.
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 from fiber_robotics_sim import (
-    eskin, eskin_experiments, eskin_visuals, experiments, models, visuals,
+    demo_views, embedded_view, eskin, eskin_experiments, eskin_visuals, experiments, models, visuals,
+    showcase,
 )
 
 
@@ -168,10 +171,18 @@ def tracked_tabs(labels: tuple[str, ...], navigation_key: str):
         if target not in labels:
             raise ValueError(f"unknown tab target for {navigation_key}: {target}")
         st.session_state.pop(widget_key, None)
-    default = target or st.session_state[navigation_key]
+    # Streamlit includes default in the widget identity, even when a key is supplied.
+    # Keep it stable for direct clicks; only an explicit jump changes it.
+    default_key = f"{navigation_key}_default"
+    if target is not None:
+        st.session_state[default_key] = target
+    initial = st.session_state.get("sidebar_module_navigation", labels[0]) if navigation_key == "main_navigation" else labels[0]
+    default = st.session_state.setdefault(default_key, initial)
     callback = sync_sidebar_navigation if navigation_key == "main_navigation" else sync_section_navigation
     callback_args = (widget_key,) if navigation_key == "main_navigation" else (navigation_key, widget_key)
-    return st.tabs(labels, default=default, key=widget_key, on_change=callback, args=callback_args)
+    tabs = st.tabs(labels, default=default, key=widget_key, on_change=callback, args=callback_args)
+    st.session_state[navigation_key] = st.session_state[widget_key]
+    return tabs
 
 
 def select_main_tab(
@@ -210,6 +221,12 @@ def tab_jump_button(
         args=(LAB_LABELS[target_index], section_key, section_label),
         use_container_width=True,
     )
+
+
+def move_showcase(step: int) -> None:
+    """Move within the three-chapter visitor showcase."""
+    current = int(st.session_state.get("showcase_chapter", 0))
+    st.session_state.showcase_chapter = min(max(current + step, 0), len(showcase.CHAPTERS) - 1)
 
 
 GUIDED_ROUTES = {
@@ -414,6 +431,93 @@ with optics_lab:
     )
 
 with overview_tab:
+    with st.container(border=True):
+        showcase_intro, showcase_start = st.columns([4, 1.25])
+        with showcase_intro:
+            st.caption("面向参观、汇报与首次体验")
+            st.subheader("3 分钟看懂光纤感知")
+            st.write("用三个可复现的因果对照，看见载荷如何变成位置、温度如何干扰波长，以及稀疏采样如何重建压力场。")
+        with showcase_start:
+            st.toggle("开始成果演示", value=False, key="showcase_enabled")
+            st.caption("独立预设，不改实验状态")
+
+        if st.session_state.showcase_enabled:
+            st.session_state.setdefault("showcase_chapter", 0)
+            chapter_index = int(st.session_state.showcase_chapter)
+            current_chapter = showcase.chapter(chapter_index)
+            st.progress((chapter_index + 1) / len(showcase.CHAPTERS))
+            st.caption(f"成果演示 {chapter_index + 1} / {len(showcase.CHAPTERS)} · 约 3 分钟，可手动控制节奏")
+            st.markdown(f"### {current_chapter['label']} · {current_chapter['title']}")
+            question_column, action_column = st.columns(2)
+            with question_column:
+                st.markdown("**观众的问题**")
+                st.write(current_chapter["question"])
+            with action_column:
+                st.markdown("**现在看什么**")
+                st.write(current_chapter["action"])
+
+            pressure_size = 4
+            if current_chapter["id"] == "pressure":
+                pressure_label = st.radio(
+                    "稀疏采样密度",
+                    ("4×4 · 16 通道", "8×8 · 64 通道"),
+                    horizontal=True,
+                    key="showcase_pressure_density",
+                )
+                pressure_size = 8 if pressure_label.startswith("8×8") else 4
+            demo_views.render_demo_panel(
+                current_chapter["kind"],
+                showcase.demo_parameters(current_chapter["id"], pressure_size),
+                instance_key=f"showcase-{current_chapter['id']}-{pressure_size}",
+                context="showcase",
+            )
+
+            metric_columns = st.columns(len(showcase.chapter_metrics(current_chapter["id"], pressure_size)))
+            for column, (label, value, detail) in zip(
+                metric_columns,
+                showcase.chapter_metrics(current_chapter["id"], pressure_size),
+                strict=True,
+            ):
+                column.metric(label, value, detail)
+            st.success(f"**从结果可以解释：** {current_chapter['explanation']}")
+            st.caption(f"模型边界：{current_chapter['boundary']}")
+
+            if current_chapter["id"] == "pressure":
+                st.markdown("**同一压力场的完整 A/B 指标**")
+                st.dataframe(
+                    pd.DataFrame(showcase.pressure_comparison()).style.format({
+                        "压力 RMSE (kPa)": "{:.2f}",
+                        "峰值误差 (%)": "{:.1f}",
+                        "质心误差 (%)": "{:.1f}",
+                        "总载荷误差 (%)": "{:.1f}",
+                    }),
+                    hide_index=True,
+                    width="stretch",
+                )
+                st.caption("两组仅改变采样网格；请分别判断各项误差，不把通道增加解释成所有指标必然同时改善。")
+
+            previous_column, next_column, full_lab_column = st.columns(3)
+            previous_column.button(
+                "← 上一章",
+                key="showcase_previous",
+                on_click=move_showcase,
+                args=(-1,),
+                disabled=chapter_index == 0,
+                width="stretch",
+            )
+            next_column.button(
+                "下一章 →",
+                key="showcase_next",
+                on_click=move_showcase,
+                args=(1,),
+                disabled=chapter_index == len(showcase.CHAPTERS) - 1,
+                width="stretch",
+            )
+            lab_index, section_key, section_label = current_chapter["target"]
+            with full_lab_column:
+                tab_jump_button(lab_index, "进入完整实验", section_key, section_label)
+
+    st.divider()
     st.subheader("引导式实验路线")
     st.caption("六条路线覆盖 6 个专业领域内的全部实验。先选目标，再按步骤进入对应子实验；路线只记录学习进度，不修改实验参数、姿态或任务状态。")
     st.session_state.guided_route_progress = normalise_guided_progress(
@@ -483,7 +587,7 @@ with overview_tab:
         ]),
     ])
     st.subheader("系统架构示意")
-    st.iframe(visuals.sensing_chain_svg(), height=220)
+    embedded_view.render_html(visuals.sensing_chain_svg(), key="sensing-chain", height=220, title="系统感知链")
     st.subheader("当前测量配置")
     config_a, config_b, config_c, config_d, config_e, config_f = st.columns(6)
     config_a.metric("温度变化", f"{temperature:.1f} °C")
@@ -770,7 +874,7 @@ with hand_tab:
         planar_metrics[1].metric("FBG 反演接触合力", f"{np.asarray(planar_fbg_decision['contact_force_n']).sum():.2f} N")
         planar_metrics[2].metric("掌心 FBG 接触力", f"{planar_fbg_decision['palm_touch_n']:.2f} N")
         st.caption("动画自动播放手部从上一状态到当前状态的过渡；手指碰到罐体会停在接触面，接触力随屈曲增大。")
-        st.iframe(
+        embedded_view.render_html(
             visuals.planar_hand_animation_html(
                 previous_pose,
                 display_pose,
@@ -782,7 +886,7 @@ with hand_tab:
                 list(planar_fbg_decision["contact_fingers"]),
                 animate=st.session_state.get("smooth_animation", True),
             ),
-            height=620,
+            key="planar-hand", height=620, title="二维抓取视图",
         )
         st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 7), planar_fbg["wavelength_shifts_nm"], "二维抓取：五指与掌心六路 FBG 波长漂移"), width="stretch")
         st.caption(f"第 6 路为掌心 FBG：{'检测到掌心接触力' if planar_fbg_decision['palm_contact'] else '当前掌心接触力较弱'}。抓稳判定仍保持“拇指＋至少两根其余手指”规则，且需要接触力达到阈值。")
@@ -853,6 +957,7 @@ with hand_tab:
 
 with tactile_tab:
     st.subheader("多材质触觉识别：五指与掌心 FBG 接触分布")
+    tactile_demo_slot = st.container()
     module_learning_frame(
         "理解六路 FBG 接触分布如何区分软体、硬块、曲面与薄板。",
         "先载入标准海绵并保存基线 A，再载入其他场景或只提高扰动，比较当前 B。",
@@ -911,6 +1016,8 @@ with tactile_tab:
         "noise_nm": noise,
         "seed": int(seed),
     })
+    with tactile_demo_slot:
+        demo_views.render_demo("tactile", tactile_record["parameters"])
     tactile_results = tactile_record["results"]
     material_diagnosis = {
         "material": tactile_results["diagnosed_material"],
@@ -1007,6 +1114,7 @@ with tactile_tab:
 
 with foot_tab:
     st.subheader("机器人足：六区足底接触、地形与步态相位")
+    foot_demo_slot = st.container()
     module_learning_frame(
         "理解六区载荷如何形成压力中心，并量化 FBG 反演误差。",
         "先载入平地中期并保存基线 A，再比较脚跟、前掌、柔软地面或摆动期。",
@@ -1058,6 +1166,8 @@ with foot_tab:
         "seed": int(seed), "failed_zone": 1 if failed == "足底区域 1" else None,
         "drift_nm": drift,
     })
+    with foot_demo_slot:
+        demo_views.render_demo("foot", foot_record["parameters"])
     foot_results = foot_record["results"]
     zones = np.asarray(foot_results["true_zone_loads_n"], dtype=float)
     estimated_zones = np.asarray(foot_results["estimated_zone_loads_n"], dtype=float)
@@ -1188,6 +1298,7 @@ with calibration_tab:
     st.metric("当前配置", f"{sample_rate} Hz · {failed}")
     st.divider()
     st.subheader("单根手指 FBG 弯曲标定")
+    fbg_demo_slot = st.container()
     st.caption("① 载入示例 → ② 保存基线 A → ③ 改一个条件，观察当前 B → ④ 下载实验记录。")
     parameter_keys = {
         "angle_deg": "hand_bend_angle", "length_mm": "calibration_length",
@@ -1221,6 +1332,8 @@ with calibration_tab:
         st.write(f"当前测量条件：温差 {temperature:g} °C · 噪声 {noise:.4f} nm · 种子 {int(seed)}")
         st.caption(f"几何：{length:g} mm · 偏置 {offset:g} mm · {attachment}。温度和噪声在侧栏调节。")
     current_experiment = experiments.run_calibration({parameter: st.session_state[key] for parameter, key in parameter_keys.items()})
+    with fbg_demo_slot:
+        demo_views.render_demo("fbg", current_experiment["parameters"])
     result = current_experiment["results"]
     gain = result["gain"]
     # 中心线仍展示真实形状；反演读数与报告共用同一组实验结果。
@@ -1613,7 +1726,7 @@ with hand_3d_tab:
             st.success("FBG 已抓稳：掌心、拇指及至少两根其余手指达到触觉阈值。")
         else:
             st.warning("尚未满足：" + "、".join(name for name, passed, _, _ in grasp_conditions if not passed) + "。")
-        st.iframe(
+        embedded_view.render_html(
             visuals.anthropomorphic_hand_html(
                 st.session_state.three_d_action,
                 three_d_joints,
@@ -1629,7 +1742,7 @@ with hand_3d_tab:
                 previous_finger_joint_angles_deg=st.session_state.three_d_previous_finger_joints,
                 animate=st.session_state.get("smooth_animation", True),
             ),
-            height=560,
+            key="spatial-hand", height=560, title="三维抓取视图",
         )
         st.caption("拖动模型可旋转视角；滚轮缩放保持关闭。物体保持世界坐标，寻找程序移动手部抓取包络至目标。")
         with st.container(key="three_d_grasp_metrics"):
@@ -1766,6 +1879,7 @@ with hand_3d_tab:
 
 with shape_tab:
     st.subheader("三芯光纤的连续体机器人 3D 形状重建")
+    shape_demo_slot = st.container()
     module_learning_frame(
         "理解三芯差分波长如何反演曲率与弯曲方向，并量化整条中心线误差。",
         "先载入理想恒曲率并保存基线 A，再比较已知扭转先验、波长噪声或芯间温差场景。",
@@ -1812,6 +1926,8 @@ with shape_tab:
         "temperature_c": temperature, "noise_nm": noise,
         "core_temperature_gradient_c": core_temperature_gradient, "seed": int(seed),
     })
+    with shape_demo_slot:
+        demo_views.render_demo("shape", shape_record["parameters"])
     shape_results = shape_record["results"]
     shape = {
         "core_angles_deg": np.asarray(shape_results["core_angles_deg"]),
@@ -1880,6 +1996,7 @@ with shape_tab:
 
 with health_tab:
     st.subheader("机械臂结构健康监测：点式 FBG 阵列局部异常定位")
+    health_demo_slot = st.container()
     module_learning_frame(
         "区分‘检测到异常’与‘异常定位准确’，并理解阵列密度对定位区间的影响。",
         "先载入健康基线，再载入局部异常；分别比较稀疏与高密度阵列。",
@@ -1919,6 +2036,8 @@ with health_tab:
         "anomaly_severity": anomaly_severity, "sensor_count": int(fbg_count),
         "temperature_c": temperature, "noise_nm": noise, "seed": int(seed),
     })
+    with health_demo_slot:
+        demo_views.render_demo("health", health_record["parameters"])
     health_results = health_record["results"]
     sensor_positions = np.asarray(health_results["sensor_positions_mm"], dtype=float)
     arm_health = {
@@ -2033,6 +2152,7 @@ with health_tab:
 
 with distributed_tab:
     st.subheader("分布式光纤感知：连续空间上的应变、振动与温度")
+    distributed_demo_slot = st.container()
     st.caption("本页以四类教学解析模型对比不同散射机制的观测量：Rayleigh/OFDR 连续应变、φ-OTDR/DAS 振动事件、Brillouin 频移、Raman 分布式温度。")
     distributed_widget_keys = {
         "mode": "distributed_mode",
@@ -2079,6 +2199,8 @@ with distributed_tab:
         "sample_rate_hz": int(sample_rate),
     }
     distributed_record = experiments.run_distributed_experiment(distributed_parameters)
+    with distributed_demo_slot:
+        demo_views.render_demo("distributed", distributed_parameters)
     distributed_result, distributed_frame = models.simulate_distributed_mechanism(
         distributed_mode, fiber_length, event_position, event_strength, int(sample_rate)
     )
@@ -2089,7 +2211,7 @@ with distributed_tab:
         else:
             curve_kind = {"Rayleigh/OFDR": "Rayleigh", "Brillouin": "Brillouin", "Raman": "Raman"}[distributed_mode]
             st.plotly_chart(visuals.distributed_curve_figure(distributed_result, curve_kind), width="stretch")
-        st.caption("曲线峰值（或热图亮斑）所在位置即事件位置；把“空间采样间隔”调大可看到峰被低估或漏掉。")
+        st.caption(distributed_record["results"]["model_note"])
     compare_all = st.checkbox("四机制对比视图（同一事件参数）", value=False)
     if compare_all:
         distributed_modes = ["Rayleigh/OFDR", "φ-OTDR / DAS", "Brillouin", "Raman"]
@@ -2122,8 +2244,8 @@ with distributed_tab:
     distributed_c.metric("数据质量", f"{float(distributed_frame['quality']) * 100:.0f}%")
     distributed_location = distributed_record["results"]
     location_a, location_b = st.columns(2)
-    location_a.metric("估计事件位置", f"{distributed_location['estimated_event_position_mm']:.1f} mm")
-    location_b.metric("事件定位误差", f"{distributed_location['location_error_mm']:.1f} mm")
+    location_a.metric("估计事件位置", f"{distributed_location['estimated_event_position_mm']:.1f} mm" if distributed_location["localization_valid"] else "不适用")
+    location_b.metric("事件定位误差", f"{distributed_location['location_error_mm']:.1f} mm" if distributed_location["localization_valid"] else "不适用")
     def reset_distributed_demo() -> None:
         for key, value in (
             ("distributed_mode", "Rayleigh/OFDR"),
@@ -2139,7 +2261,7 @@ with distributed_tab:
     distributed_baseline = st.session_state.get("distributed_baseline")
     if distributed_baseline is not None:
         baseline_parameters = distributed_baseline["parameters"]
-        baseline_results = distributed_baseline["results"]
+        baseline_results = experiments.run_distributed_experiment(baseline_parameters)["results"]
         st.markdown("#### 基线 A 与当前 B")
         st.dataframe({
             "指标": ["机制", "光纤长度", "事件位置", "事件幅值", "空间采样间隔", "采样率", "估计位置", "定位误差", "数据质量"],
@@ -2147,14 +2269,14 @@ with distributed_tab:
                 baseline_parameters["mode"], f"{baseline_parameters['fiber_length_mm']:.1f} mm",
                 f"{baseline_parameters['event_position_mm']:.1f} mm", f"{baseline_parameters['event_strength']:.1f}",
                 f"{baseline_parameters['spatial_spacing_mm']} mm", f"{baseline_parameters['sample_rate_hz']} Hz",
-                f"{baseline_results['estimated_event_position_mm']:.1f} mm", f"{baseline_results['location_error_mm']:.1f} mm",
+                f"{baseline_results['estimated_event_position_mm']:.1f} mm" if baseline_results["localization_valid"] else "不适用", f"{baseline_results['location_error_mm']:.1f} mm" if baseline_results["localization_valid"] else "不适用",
                 f"{baseline_results['quality'] * 100:.0f}%",
             ],
             "当前 B": [
                 distributed_parameters["mode"], f"{distributed_parameters['fiber_length_mm']:.1f} mm",
                 f"{distributed_parameters['event_position_mm']:.1f} mm", f"{distributed_parameters['event_strength']:.1f}",
                 f"{distributed_parameters['spatial_spacing_mm']} mm", f"{distributed_parameters['sample_rate_hz']} Hz",
-                f"{distributed_location['estimated_event_position_mm']:.1f} mm", f"{distributed_location['location_error_mm']:.1f} mm",
+                f"{distributed_location['estimated_event_position_mm']:.1f} mm" if distributed_location["localization_valid"] else "不适用", f"{distributed_location['location_error_mm']:.1f} mm" if distributed_location["localization_valid"] else "不适用",
                 f"{distributed_location['quality'] * 100:.0f}%",
             ],
         }, hide_index=True, width="stretch")
@@ -2380,6 +2502,7 @@ python run.py
 
 with polarization_tab:
     st.subheader("偏振与干涉传感：偏振态、旋转与微腔光程差")
+    optical_demo_slot = st.container()
     module_learning_frame(
         "区分偏振 Stokes 状态、Sagnac 旋转相位和 EFPI 微腔长度三类光学观测量。",
         "先载入偏振基线，再分别比较横向应力、光纤扭转、温度交叉敏感和旋转压力场景。",
@@ -2423,6 +2546,11 @@ with polarization_tab:
         "gyro_rate_deg_s": gyro_rate, "pressure_mpa": cavity_pressure,
         "cavity_um": cavity_length, "temperature_c": temperature,
     })
+    with optical_demo_slot:
+        optical_demo_mechanism = st.selectbox(
+            "直观演示机制", ["偏振态", "Sagnac 环路", "EFPI 微腔"], key="optical_demo_mechanism",
+        )
+        demo_views.render_demo("optical", {**optical_record["parameters"], "mechanism": optical_demo_mechanism})
     optical_results = optical_record["results"]
     with pol_right:
         st.plotly_chart(visuals.polarization_figure(polarization), width="stretch")
@@ -2625,7 +2753,7 @@ with chain_tab:
             else f"{float(health_results['damage_index']):.2f}",
             "定位误差 (mm)" if health_results["localization_error_mm"] is not None else "局部异常指数",
         ),
-        "分布式事件定位": (f"{float(distributed_location['location_error_mm']):.2f}", "事件定位误差 (mm)"),
+        "分布式事件定位": (f"{distributed_location['location_error_mm']:.2f}" if distributed_location["localization_valid"] else "不适用", "事件定位误差 (mm)"),
         "偏振与干涉传感": (f"{abs(float(optical_results['temperature_ellipticity_offset_deg'])):.2f}", "温度椭圆率偏移 (°)"),
     }
     task_value, task_label = task_results[experiment]
@@ -2661,6 +2789,7 @@ with chain_tab:
 
 with assembly_tab:
     st.subheader("可更换式足底组件：二维装配状态预测")
+    demo_views.render_demo("assembly", {"assembly_case": sole_assembly_case, "temperature_c": temperature})
     st.caption("固定光纤感知芯与可更换耐磨外底/分区传力模块分离；以下是空载、恒温条件下的解析仿真预测，不是实物验收、密封或耐久结论。")
     module_learning_frame(
         "理解空载复装筛查如何利用工作光栅、参考光栅和左右差异区分压入不足与单侧错位。",
@@ -2782,6 +2911,7 @@ with eskin_lab:
 
     with taxel_tab:
         st.subheader("三轴触觉单元：主动/参考信号与力反演")
+        taxel_demo_slot = st.container()
         module_learning_frame(
             "理解五个电容通道如何分离 Fx、Fy、Fz，并观察参考结构对温度、曲率和应变共模的校正作用。",
             "先保存默认工况为基线 A，再提高温度或降低参考匹配度，比较原始与校正后的力误差。",
@@ -2807,6 +2937,13 @@ with eskin_lab:
             reference_match=eskin_reference_match,
             seed=int(seed),
         )
+        with taxel_demo_slot:
+            demo_views.render_demo("taxel", {
+                "fx_n": eskin_fx, "fy_n": eskin_fy, "fz_n": eskin_fz,
+                "curvature_per_m": eskin_curvature, "strain_fraction": eskin_strain_milli / 1000.0,
+                "temperature_c": eskin_taxel_temperature, "noise_pf": eskin_noise_pf,
+                "reference_match": eskin_reference_match, "seed": int(seed),
+            })
         with taxel_display:
             taxel_metrics = st.columns(4)
             taxel_metrics[0].metric("校正后力 MAE", f"{taxel_result['corrected_mae_n']:.3f} N")
@@ -2871,6 +3008,7 @@ with eskin_lab:
 
     with optical_skin_tab:
         st.subheader("FBG 光学皮肤：感受野、温补与压力质心")
+        skin_demo_slot = st.container()
         module_learning_frame(
             "理解有限数量的 FBG 如何通过重叠感受野编码接触位置与合力。",
             "比较 4、8、16 个传感点，并在单点和双点之间切换；再提高温度或噪声观察补偿结果。",
@@ -2901,6 +3039,13 @@ with eskin_lab:
             receptive_width_mm=receptive_width, temperature_c=fbg_temperature,
             noise_nm=fbg_noise_nm, seed=int(seed),
         )
+        with skin_demo_slot:
+            demo_views.render_demo("skin", {
+                "sensor_count": fbg_sensor_count, "touch_points": touches,
+                "skin_width_mm": skin_width, "skin_height_mm": skin_height,
+                "receptive_width_mm": receptive_width, "temperature_c": fbg_temperature,
+                "noise_nm": fbg_noise_nm, "seed": int(seed),
+            })
         with fbg_display:
             fbg_metrics = st.columns(4)
             fbg_metrics[0].metric("载荷误差", f"{fbg_skin_result['load_error_n']:.3f} N")
@@ -2946,6 +3091,7 @@ with eskin_lab:
 
     with pressure_tab:
         st.subheader("稀疏压力重建：采样、插值与误差")
+        pressure_demo_slot = st.container()
         module_learning_frame(
             "理解稀疏通道如何映射为致密压力场，并用多项指标评价信息损失。",
             "从 4×4 切换到 8×8 采样，比较单点、双点、边缘接触和滑动前兆。",
@@ -2965,6 +3111,12 @@ with eskin_lab:
             peak_pressure_kpa=peak_pressure, bandwidth=kernel_bandwidth,
             noise_kpa=pressure_noise, seed=int(seed),
         )
+        with pressure_demo_slot:
+            demo_views.render_demo("pressure", {
+                "scenario": pressure_scenario, "sparse_size": sparse_size, "output_size": output_size,
+                "peak_pressure_kpa": peak_pressure, "bandwidth": kernel_bandwidth,
+                "noise_kpa": pressure_noise, "seed": int(seed),
+            })
         with pressure_display:
             pressure_metrics = st.columns(5)
             pressure_metrics[0].metric("压力场 RMSE", f"{pressure_result['rmse_kpa']:.2f} kPa")
@@ -3012,10 +3164,11 @@ with eskin_lab:
 
     with dynamic_tab:
         st.subheader("动态滑移与多模态决策")
+        dynamic_demo_slot = st.container()
         module_learning_frame(
             "把法向力、剪切力、压力质心运动和温度放到同一时间轴上，理解多条件告警。",
             "比较稳定按压、载荷爬升、横向滑动、即将滑移、热物体和温漂，再提高噪声进行重复采样。",
-            "观察剪切比是否越阈、质心速度是否同时升高，以及重复试验中告警率是否稳定。",
+            "观察剪切比是否越阈、稳定接触窗口内的质心速度峰值是否也越阈，以及重复试验中告警率是否稳定。",
             "阈值是教学设置，实际系统必须按材料、封装、接触速度与采样链重新标定。",
         )
         dynamic_controls, dynamic_display = st.columns([1.0, 1.8], gap="large")
@@ -3034,6 +3187,13 @@ with eskin_lab:
             slip_threshold=slip_threshold, temperature_c=dynamic_temperature,
             noise_ratio=dynamic_noise, seed=int(seed),
         )
+        with dynamic_demo_slot:
+            demo_views.render_demo("dynamic", {
+                "event": dynamic_event, "sample_rate_hz": dynamic_sample_rate,
+                "duration_s": dynamic_duration, "normal_force_n": dynamic_force,
+                "slip_threshold": slip_threshold, "temperature_c": dynamic_temperature,
+                "noise_ratio": dynamic_noise, "seed": int(seed),
+            })
         repeat_result = eskin.repeat_dynamic_event(
             dynamic_event, repeats=repeat_count,
             sample_rate_hz=dynamic_sample_rate, duration_s=dynamic_duration,
@@ -3049,17 +3209,19 @@ with eskin_lab:
             dynamic_metrics[3].metric("质心峰值速度", f"{dynamic_result['peak_centroid_speed_mm_s']:.1f} mm/s")
             dynamic_metrics[4].metric("重复告警率", f"{repeat_result['alert_rate_pct']:.1f}%")
             st.plotly_chart(eskin_visuals.dynamic_event_figure(dynamic_result), width="stretch")
+        if dynamic_event == "即将滑移":
+            st.caption("本预设的剪切载荷也随阈值生成；调节阈值会重新生成事件，不等于对同一条记录单独重判。")
         if dynamic_result["alert"]:
-            st.error("当前教学规则判定为滑移风险：剪切比与压力质心速度同时超过阈值。")
+            st.error("当前教学规则判定为滑移风险：稳定接触窗口内的剪切比峰值与质心速度峰值均超过阈值，不要求同一时刻发生。")
         else:
             st.success("当前教学规则未触发滑移风险；仍需结合任务允许的漏报与误报代价选择阈值。")
         repeat_rows = [
-            {"统计项": "重复次数", "结果": repeat_result["repeat_count"]},
+            {"统计项": "重复次数", "结果": str(repeat_result["repeat_count"])},
             {"统计项": "告警率", "结果": f"{repeat_result['alert_rate_pct']:.1f}%"},
             {"统计项": "峰值剪切比均值", "结果": f"{repeat_result['mean_peak_ratio']:.3f}"},
             {"统计项": "峰值剪切比标准差", "结果": f"{repeat_result['peak_ratio_std']:.4f}"},
         ]
-        st.dataframe(repeat_rows, width="stretch", hide_index=True)
+        st.dataframe(pd.DataFrame(repeat_rows), width="stretch", hide_index=True)
         current_dynamic_metrics = {
             "滑移判定": dynamic_result["status"],
             "峰值剪切比": round(dynamic_result["peak_shear_ratio"], 4),

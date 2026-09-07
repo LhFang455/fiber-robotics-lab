@@ -1026,7 +1026,14 @@ def run_distributed_experiment(params: dict) -> dict:
     result = decimate_distributed_result(result, int(parameters["spatial_spacing_mm"]))
     positions, profile, observable, unit = _distributed_profile(result, parameters["mode"])
     centered_profile = np.abs(profile - np.median(profile))
-    estimated_position = float(positions[int(np.argmax(centered_profile))])
+    localization_valid = bool(parameters["mode"] != "Brillouin" and np.ptp(profile) > 1e-12)
+    estimated_position = float(positions[int(np.argmax(centered_profile))]) if localization_valid else None
+    model_note = {
+        "Brillouin": "应变源固定在 0.35L、温度源固定在 0.68L；位置滑块不参与本模型，不报告单事件真值或定位误差。",
+        "φ-OTDR / DAS": "当前 DAS 模型固定为 60 Hz 振动；幅值滑块不参与计算，剖面为时间窗内最大振幅。",
+        "Rayleigh/OFDR": "定位来自降采样应变剖面；平坦剖面不形成有效事件位置。",
+        "Raman": "背景为 20°C；温度峰值不高于背景时无局部温升，不报告事件位置。",
+    }[parameters["mode"]]
     return {
         "parameters": parameters,
         "results": {
@@ -1034,7 +1041,9 @@ def run_distributed_experiment(params: dict) -> dict:
             "quality": float(frame["quality"]),
             "sampled_points": int(len(positions)),
             "estimated_event_position_mm": estimated_position,
-            "location_error_mm": abs(estimated_position - float(parameters["event_position_mm"])),
+            "location_error_mm": abs(estimated_position - float(parameters["event_position_mm"])) if localization_valid else None,
+            "localization_valid": localization_valid,
+            "model_note": model_note,
             "observable": observable,
             "unit": unit,
             "profile_position_mm": positions.tolist(),
@@ -1060,10 +1069,15 @@ def distributed_report(record: dict) -> str:
     """生成包含机制、定位误差、采样条件和模型边界的分布式报告。"""
     parameters = record["parameters"]
     results = record["results"]
+    location_text = (
+        f"真实/估计事件位置：{parameters['event_position_mm']:.1f} / {results['estimated_event_position_mm']:.1f} mm；事件定位误差：{results['location_error_mm']:.2f} mm"
+        if results['localization_valid'] else "单事件定位：不适用；不报告真值对照或定位误差。"
+    )
     return "\n".join((
         "分布式光纤感知实验记录",
         f"机制：{parameters['mode']}；光纤长度：{parameters['fiber_length_mm']:.1f} mm",
-        f"真实/估计事件位置：{parameters['event_position_mm']:.1f} / {results['estimated_event_position_mm']:.1f} mm；事件定位误差：{results['location_error_mm']:.2f} mm",
+        location_text,
+        results['model_note'],
         f"事件幅值：{parameters['event_strength']:.1f}；空间采样间隔：{parameters['spatial_spacing_mm']} mm；采样率：{parameters['sample_rate_hz']} Hz",
         f"显示采样点：{results['sampled_points']}；数据质量：{results['quality'] * 100:.1f}%；导出观测量：{results['observable']} ({results['unit']})",
         "说明：定位值来自降采样剖面的峰值，只用于比较机制与采样影响；这是教学解析模型，不代表商用解调设备性能。",

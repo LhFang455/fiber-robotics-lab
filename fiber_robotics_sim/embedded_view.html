@@ -1,0 +1,33 @@
+<div id="__FRAME_ID__"></div>
+<script>
+(() => {
+  const config = __CONFIG__;
+  // One listener per page; resolve live frames instead of retaining detached ones.
+  if (!window.__fiberFrameHeightListener) {
+    window.__fiberFrameHeightListener = event => {
+      const data = event.data;
+      if (!data || data.type !== 'fiber-frame-height' || typeof data.id !== 'string') return;
+      const frame = document.getElementById(data.id)?.querySelector('iframe[data-fiber-view]');
+      if (!frame || event.source !== frame.contentWindow || frame.dataset.autoHeight !== 'true') return;
+      if (typeof data.height !== 'number' || !Number.isFinite(data.height) || data.height <= 0) return;
+      const height = Math.ceil(data.height) + 'px';
+      if (frame.style.height !== height) frame.style.height = height;
+    };
+    window.addEventListener('message', window.__fiberFrameHeightListener);
+  }
+  const mount = document.getElementById(config.id);
+  const frame = document.createElement('iframe');
+  frame.dataset.fiberView = config.id;
+  frame.dataset.autoHeight = String(config.autoHeight);
+  frame.title = config.title;
+  frame.tabIndex = 0;
+  // Keep an opaque origin: host-side iframe inspectors cannot enter a half-built document.
+  frame.setAttribute('sandbox', 'allow-scripts allow-downloads');
+  frame.setAttribute('allow', 'fullscreen');
+  frame.allowFullscreen = true;
+  frame.style.cssText = `display:block;width:100%;height:${config.height}px;border:0;`;
+  frame.setAttribute('scrolling', 'no');
+  frame.src = config.source;
+  mount.replaceChildren(frame);
+})();
+</script>

@@ -74,3 +74,18 @@ def test_electronic_skin_states_boundaries_and_research_links_are_explicit():
     assert "https://www.nature.com/articles/s42256-022-00487-3" in source
     assert "https://opg.optica.org/jlt/abstract.cfm?uri=jlt-42-8-3022" in source
     assert "https://pubmed.ncbi.nlm.nih.gov/42284403/" in source
+
+
+def test_repeat_statistics_serialize_without_arrow_type_repair(monkeypatch):
+    from unittest.mock import Mock
+    from streamlit import dataframe_util
+
+    repair = Mock(wraps=dataframe_util.fix_arrow_incompatible_column_types)
+    monkeypatch.setattr(dataframe_util, "fix_arrow_incompatible_column_types", repair)
+    app = AppTest.from_file(APP_PATH, default_timeout=40).run()
+    app.slider(key="eskin_repeat_count").set_value(80).run()
+    assert not app.exception
+    repair.assert_not_called()
+    tables = [item.value for item in app.dataframe if "统计项" in item.value.columns]
+    statistics = next(table for table in tables if "峰值剪切比均值" in table["统计项"].values)
+    assert statistics.loc[statistics["统计项"] == "重复次数", "结果"].iloc[0] == "80"

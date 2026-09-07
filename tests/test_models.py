@@ -1182,7 +1182,7 @@ def test_overview_contains_a_clickable_module_directory_and_operational_summary(
 
     assert "模块目录" in source
     assert "当前测量配置" in source
-    assert "st.iframe" in source
+    assert "embedded_view.render_html" in source
     assert "推荐实验路径" in source
     assert "返回主页" in source
 
@@ -1217,10 +1217,10 @@ def test_three_d_layout_keeps_commands_and_model_in_the_primary_split():
     assert 'with st.expander("高级姿态与目标参数", expanded=False):' in three_d_context
     assert 'st.markdown("#### 三维交互视图")' in display_context
     assert "height=560" in display_context
-    assert display_context.index("st.iframe(") < display_context.index(
+    assert display_context.index("embedded_view.render_html(") < display_context.index(
         'with st.container(key="three_d_grasp_metrics"):'
     )
-    assert display_context.index("st.iframe(") < display_context.index(
+    assert display_context.index("embedded_view.render_html(") < display_context.index(
         'with st.expander("查看抓稳条件与当前读数"'
     )
 
@@ -1318,7 +1318,7 @@ def test_planar_search_uses_the_same_native_transition_view_as_every_other_task_
 
     assert 'if st.session_state.two_d_task_phase == "寻找目标":' not in display_context
     assert "visuals.planar_hand_animation_html(" in display_context
-    assert "st.iframe(" in display_context
+    assert "embedded_view.render_html(" in display_context
 
 
 

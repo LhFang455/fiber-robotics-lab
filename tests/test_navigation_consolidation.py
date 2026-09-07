@@ -109,3 +109,17 @@ def test_programmatic_navigation_remounts_tabs_while_preserving_stable_state_key
         "eskin_navigation",
     ):
         assert f'"{key}"' in source
+
+
+def test_direct_tab_selection_does_not_change_widget_identity():
+    app = AppTest.from_file(APP_PATH, default_timeout=40).run()
+    assert not app.exception
+    previous_id = app.get("tab_container")[0].proto.id
+    app.session_state["main_navigation_widget_0"] = EXPECTED_LABS[-1]
+    app.session_state["main_navigation"] = EXPECTED_LABS[-1]
+    app.session_state["sidebar_module_navigation"] = EXPECTED_LABS[-1]
+    app.run()
+    assert not app.exception
+    main = app.get("tab_container")[0].proto
+    assert main.id == previous_id
+    assert main.tab_container.default_tab_index == 6
