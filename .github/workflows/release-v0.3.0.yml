@@ -37,5 +37,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          # A user-authorized retag may replace the existing v0.3.0 release.
+          # Verification must succeed first. Keep the newly pushed tag intact.
+          if gh release view v0.3.0 >/dev/null 2>&1; then
+            gh release delete v0.3.0 --yes
+          fi
           gh release create v0.3.0 --verify-tag --title v0.3.0 --notes-file docs/releases/v0.3.0.md --latest
           test "$(gh release view v0.3.0 --json name --jq '.name')" = 'v0.3.0'

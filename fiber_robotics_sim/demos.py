@@ -7,13 +7,17 @@ from pathlib import Path
 
 import numpy as np
 
-from . import eskin, experiments
+from . import eskin, experiments, model_assets
 
 
 ROOT = Path(__file__).parent
 
 
 def foot_demo(parameters: dict) -> dict:
+    parameters = dict(parameters)
+    selected = parameters.pop("inspection_channel", None)
+    if selected is not None:
+        selected = max(0, min(int(selected), 5))
     phases = sorted(set(np.linspace(0, 100, 121).tolist() + [float(parameters["phase_percent"])]))
     frames = []
     for phase in phases:
@@ -30,9 +34,11 @@ def foot_demo(parameters: dict) -> dict:
         frames.append({
             "progress": phase / 100, "phase": phase,
             "loads": result["estimated_zone_loads_n"], "true_loads": result["true_zone_loads_n"],
+            "valid_loads": [parameters.get("failed_zone") != i + 1 and bool(np.isfinite(v)) for i, v in enumerate(result["estimated_zone_loads_n"])],
             "cop": result["estimated_cop_xy"] if has_contact else None,
             "true_cop": result["true_cop_xy"] if result["true_total_load_n"] > 1e-9 else None,
-            "reliable": reliable, "signals": result["wavelength_shifts_nm"],
+            "reliable": reliable, "model_input_signals": result["wavelength_shifts_nm"],
+            "signals": [None if parameters.get("failed_zone") == i + 1 else v for i, v in enumerate(result["wavelength_shifts_nm"])],
             "caption": caption,
             "metrics": [
                 ["相位", f"{phase:.0f}%"],
@@ -41,9 +47,16 @@ def foot_demo(parameters: dict) -> dict:
                 ["CoP 可靠性", "可观察" if reliable else "仅供参考"],
             ],
         })
+    if selected is not None:
+        for frame in frames:
+            observed = f"{frame['loads'][selected]:.2f} N" if frame['valid_loads'][selected] else "无有效观测（失效或缺测）"
+            frame['caption'] += (f" 所选 SOLE-{selected+1:02d} / FBG {selected+1}：本动画帧反演载荷 {observed}。"
+                                 "白色边框是所选区域，不是 CoP；点击‘当前参数’与下方相位和读数对照。")
     return {
+        "inspection_channel": selected,
         "kind": "foot", "title": "看见脚底的载荷迁移",
-        "subtitle": f"{parameters['terrain']} · {parameters['support']} · 六区 FBG",
+        "subtitle": f"{parameters['terrain']} · {parameters['support']} · 六区 FBG" + (f" · SOLE-{selected+1:02d}" if selected is not None else ''),
+        "legend": "区域颜色：反演载荷 · 灰色：失效/缺测 · 白框：所选区域 · 白点：参考 CoP · 橙环：反演 CoP",
         "boundary": "扫描相位，不模拟完整行走动力学。外形与区域位置为示意；CoP 使用原实验归一化坐标。颜色为反演载荷，白点为真实 CoP、橙环为反演 CoP。",
         "frames": frames, "initial_index": phases.index(float(parameters["phase_percent"])),
         "labels": [f"区域 {i}" for i in range(1, 7)],
@@ -52,6 +65,10 @@ def foot_demo(parameters: dict) -> dict:
 
 
 def skin_demo(parameters: dict) -> dict:
+    parameters = dict(parameters)
+    selected = parameters.pop("inspection_channel", None)
+    if selected is not None:
+        selected = max(0, min(int(selected), parameters["sensor_count"] - 1))
     width = float(parameters["skin_width_mm"])
     height = float(parameters["skin_height_mm"])
     frames = []
@@ -81,23 +98,35 @@ def skin_demo(parameters: dict) -> dict:
                 ["接触数量", str(sum(force > 1e-9 for _, _, force in touches))],
             ],
         })
+    if selected is not None:
+        channel_id = f"SKIN-N{parameters['sensor_count']:02d}-{selected+1:02d}"
+        for frame in frames:
+            frame['caption'] += (f" 所选 {channel_id}：本动画帧温补响应 {frame['signals'][selected]:+.5f} nm。"
+                                 "白环跟随该测点；点击‘当前参数’才与下方静态读数对照，播放不更新观察器读数。")
     return {
+        "inspection_channel": selected,
         "kind": "skin", "title": "让皮肤感知一次触碰",
-        "subtitle": f"{parameters['sensor_count']} 个 FBG · 按压 → 平移 → 释放",
+        "subtitle": f"{parameters['sensor_count']} 个 FBG · 按压 → 平移 → 释放" + (f" · {channel_id}" if selected is not None else ""),
         "boundary": "表面凹陷与色带仅为接触示意，不能读作真实位移或压力场。FBG 光点、温补波长和反演载荷来自本页模型；橙环表示响应加权质心。",
         "frames": frames, "initial_index": 30, "width": width, "height": height,
         "sensors": result["sensor_positions_mm"].tolist(), "labels": result["sensor_labels"],
+        "legend": "光点颜色：温补响应 · 橙环：估计质心 · 白环：观察器所选 FBG（不是新增测点）",
         "receptive_width": float(parameters["receptive_width_mm"]),
         "color_max": max(.001, max(max(f["signals"]) for f in frames)),
     }
 
 
 def shape_demo(parameters: dict) -> dict:
+    parameters = dict(parameters)
+    selected = parameters.pop("inspection_node", None)
     frames = []
-    for progress in np.linspace(0, 1, 121):
+    for progress in np.linspace(0, 1, 41):
         curvature = float(parameters["curvature_per_m"] * progress)
         result = experiments.run_shape_experiment({**parameters, "curvature_per_m": curvature})["results"]
+        if selected is not None:
+            selected = max(0, min(int(selected), len(result["point_error_mm"]) - 1))
         frames.append({
+            "selected_error_mm": float(result["point_error_mm"][selected]) if selected is not None else None,
             "progress": float(progress), "curvature": curvature,
             "truth": result["true_centerline_xyz_mm"], "estimate": result["estimated_centerline_xyz_mm"],
             "rmse": result["centerline_rmse_mm"], "tip_error": result["tip_error_mm"],
@@ -115,8 +144,11 @@ def shape_demo(parameters: dict) -> dict:
             ],
         })
     return {
+        "inspection_node": selected,
         "kind": "shape", "title": "看见弯曲，也看见重建误差",
-        "subtitle": f"三芯差分重建 · 长度 {parameters['length_mm']:.0f} mm",
+        "legend": "青色实体：真实中心线 · 橙线：重建中心线 · 白/金点：所选计算节点 · 粉线：未放大局部误差",
+        "inspection_text": (f"所选 S-{selected:03d} 为计算节点，不是额外测点。播放仅改变演示帧；点击‘当前参数’与下方观察器对照。" if selected is not None else ''),
+        "subtitle": f"三芯差分重建 · 长度 {parameters['length_mm']:.0f} mm" + (f" · S-{selected:03d}" if selected is not None else ''),
         "boundary": "沿用恒曲率教学模型，扭转率为已知先验。管径为示意，中心线与误差使用实际模型坐标；播放进度不是物理时间。",
         "frames": frames, "initial_index": len(frames) - 1,
         "labels": ["纤芯 1", "纤芯 2", "纤芯 3"], "length": float(parameters["length_mm"]),
@@ -124,10 +156,16 @@ def shape_demo(parameters: dict) -> dict:
 
 
 def demo_html(payload: dict) -> str:
+    payload = dict(payload)
+    try:
+        payload['asset'] = model_assets.scene_asset(payload)
+    except (model_assets.AssetError, OSError, KeyError, ValueError, TypeError):
+        payload['asset'] = None
+        payload['asset_warning'] = '结构资产校验未通过，当前使用原程序模型；数据计算不受影响。'
     config = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c")
     template = (ROOT / "demo_scene.html").read_text(encoding="utf-8")
     runtime = (ROOT / "vendor" / "three.min.js").read_text(encoding="utf-8")
-    return template.replace("__CONFIG__", config).replace("__THREE_RUNTIME__", runtime)
+    return template.replace("__CONFIG__", config).replace("__THREE_RUNTIME__", runtime).replace("__READOUT_RUNTIME__", (ROOT / "demo_readout.js").read_text(encoding="utf-8")).replace("__ASSET_RUNTIME__", (ROOT / "model_assets.js").read_text(encoding="utf-8"))
 
 
 def assembly_demo(parameters: dict) -> dict:
@@ -156,6 +194,7 @@ def assembly_demo(parameters: dict) -> dict:
             ],
         })
     return {
+        'pending_signal_text': '就位后读取',
         'kind': 'assembly', 'title': '拆开看结构，装好看信号',
         'subtitle': '可更换外底 · 固定感知芯 · 空载复装筛查',
         'boundary': '分层距离和外形为示意；错位与压入不足在模型中放大 4 倍。读数仅对应就位后的当前工况，不是装配运动、接触应力、密封或耐久计算。',
@@ -166,6 +205,10 @@ def assembly_demo(parameters: dict) -> dict:
 
 
 def health_demo(parameters: dict) -> dict:
+    parameters = dict(parameters)
+    selected = parameters.pop('inspection_channel', None)
+    if selected is not None:
+        selected = max(0, min(int(selected), parameters['sensor_count'] - 1))
     frames = []
     for progress in np.linspace(0, 1, 121):
         severity = float(parameters['anomaly_severity'] * progress)
@@ -187,11 +230,18 @@ def health_demo(parameters: dict) -> dict:
                 ['定位误差', f"{result['localization_error_mm']:.1f} mm" if valid else '不适用'],
             ],
         })
+    if selected is not None:
+        channel_id = f"ARM-N{parameters['sensor_count']:02d}-{selected+1:02d}"
+        position = float(result['sensor_positions_mm'][selected])
+        for frame in frames:
+            frame['caption'] += (f" 所选 {channel_id}，x={position:.1f} mm；本动画帧波长 {frame['signals'][selected]:+.5f} nm。"
+                                 "白环仅标出观察器测点，不是异常定位；点击‘当前参数’与下方静态值对照。")
     return {
+        'inspection_channel': selected,
         'kind': 'health', 'title': '看见异常，也看见定位范围',
-        'subtitle': f"{parameters['sensor_count']} 点阵列 · 当前载荷 {parameters['load_n']:.0f} N",
+        'subtitle': f"{parameters['sensor_count']} 点阵列 · 当前载荷 {parameters['load_n']:.0f} N" + (f" · {channel_id}" if selected is not None else ''),
         'boundary': '梁体与标记为示意，横向位置采用本页毫米坐标。红色区域不是裂纹形貌；橙色区间是教学定位区间，不是统计置信区间或安全验收结论。',
-        'legend': '光点颜色：FBG 波长响应 · 红环：真实异常设定 · 橙色带：有效定位区间',
+        'legend': '光点颜色：FBG 波长响应 · 红环：真实异常设定 · 橙色带：有效定位区间 · 白环：所选测点',
         'frames': frames, 'initial_index': 120,
         'labels': [f'FBG {i + 1}' for i in range(parameters['sensor_count'])],
         'sensors': result['sensor_positions_mm'],

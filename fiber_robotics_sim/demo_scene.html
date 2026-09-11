@@ -8,33 +8,40 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;ma
 .layout{display:grid;grid-template-columns:minmax(0,1fr) 245px;gap:14px;height:385px}#view{position:relative;min-width:0;border-radius:12px;background:radial-gradient(ellipse at 50% 45%,#24435488,#08151d);overflow:hidden;touch-action:none;cursor:grab}#view:active{cursor:grabbing}#view canvas{display:block;width:100%;height:100%}.view-hint{position:absolute;bottom:10px;left:12px;right:12px;color:#adc4cf;font-size:11px;pointer-events:none}.legend{position:absolute;top:10px;left:12px;right:12px;color:#cee1eb;font-size:11px;pointer-events:none}
 aside{min-width:0;display:flex;flex-direction:column;gap:12px}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}.metric{padding:9px;border-radius:8px;background:#08131b77;min-width:0}.metric span{display:block;font-size:11px;color:#9fb8c9}.metric strong{font-size:15px;font-weight:600;overflow-wrap:anywhere}.signals-title{font-size:12px;color:#b9d0dc;margin-bottom:7px}#signals{display:grid;gap:5px}#signals.dense{grid-template-columns:1fr 1fr;gap:4px 10px}.signal{min-width:0;font-size:10px;display:grid;grid-template-columns:1fr auto;column-gap:5px}.signal-name{color:#afc5d1}.signal-value{font-variant-numeric:tabular-nums}.track{grid-column:1/-1;background:#274151;height:3px;border-radius:2px}.bar{height:3px;background:#60dcca;border-radius:2px;width:0}
 .controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:13px}button,select{font:inherit;font-size:12px;border:1px solid #3f6277;color:#e9f6ff;background:#18384c;border-radius:7px;padding:7px 11px;cursor:pointer}button.primary{background:#b5eddb;color:#102d31;border-color:#b5eddb;font-weight:700}button:hover,select:hover{filter:brightness(1.18)}button:focus-visible,select:focus-visible,input:focus-visible,#view:focus-visible{outline:2px solid #ffcc80;outline-offset:2px}.speed{margin-left:auto;font-size:11px;color:#b9d0dc;display:flex;align-items:center;gap:5px}select{padding:6px}#progress-row{display:flex;align-items:center;gap:10px;margin:10px 0}input[type=range]{flex:1;min-width:0;accent-color:#94dfca}output{font-size:12px;width:40px;font-variant-numeric:tabular-nums;text-align:right}
-#caption{padding:10px 13px;border-left:3px solid #78d7c5;background:#07172188;border-radius:0 8px 8px 0;min-height:62px;font-size:13px}#boundary{font-size:11px;color:#9eb5c4;margin:10px 0 0}#motion-note{font-size:11px;color:#f5ca8b;margin-top:5px}#panel:fullscreen{width:100%;height:100%;border-radius:0;overflow:auto}#panel:fullscreen .layout{height:calc(100vh - 290px);min-height:320px}.fallback{padding:35px;color:#c7dbe7}
-@media(max-width:650px){#panel{padding:12px}header{align-items:flex-start}h2{font-size:17px}.badge{display:none}.layout{display:block;height:auto}#view{height:295px}aside{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:9px}.metrics{gap:5px}.metric{padding:6px}.metric strong{font-size:12px}.signal{font-size:9px}#signals{gap:3px}#signals.dense{gap:3px 6px}.controls{gap:5px}.controls button{padding:7px 8px}.speed{margin-left:0}#caption{font-size:12px;min-height:64px}#boundary{font-size:10px}#panel:fullscreen .layout{height:auto}#panel:fullscreen #view{height:min(38vh,320px)}#panel[data-kind="taxel"]:fullscreen #view{height:min(32vh,270px)}}
+.layer-note,#scale-note{font-size:11px;color:#9eb5c4}button[aria-pressed="false"]{opacity:.55}#caption{padding:10px 13px;border-left:3px solid #78d7c5;background:#07172188;border-radius:0 8px 8px 0;min-height:62px;font-size:13px}#boundary{font-size:11px;color:#9eb5c4;margin:10px 0 0}#motion-note{font-size:11px;color:#f5ca8b;margin-top:5px}#panel:fullscreen{width:100%;height:100%;border-radius:0;overflow:auto}#panel:fullscreen .layout{height:calc(100vh - 290px);min-height:320px}.fallback{padding:35px;color:#c7dbe7}
+@media(max-width:650px){#panel[data-kind="taxel"] aside{grid-template-columns:1fr}#panel{padding:12px}header{align-items:flex-start}h2{font-size:17px}.badge{display:none}.layout{display:block;height:auto}#view{height:295px}aside{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:9px}.metrics{gap:5px}.metric{padding:6px}.metric strong{font-size:12px}.signal{font-size:9px}#signals{gap:3px}#signals.dense{gap:3px 6px}.controls{gap:5px}.controls button{padding:7px 8px}.speed{margin-left:0}#caption{font-size:12px;min-height:64px}#boundary{font-size:10px}#panel:fullscreen .layout{height:auto}#panel:fullscreen #view{height:min(38vh,320px)}#panel[data-kind="taxel"]:fullscreen #view{height:min(32vh,270px)}}
+.asset-inspector{border:1px solid #355367;border-radius:10px;padding:10px 12px;margin:12px 0;background:#0a1c28}.asset-inspector summary,.view-settings summary{cursor:pointer;color:#b7ccd9;font-size:12px}.asset-inspector details{margin-top:8px}.view-settings{margin:8px 0}.asset-inspector .controls{margin-top:0}.asset-technical{font-size:11px;color:#9eb5c4;overflow-wrap:anywhere}.asset-inspector select{max-width:100%}.asset-inspector label{font-size:12px}.asset-reading{font-size:12px;line-height:1.7;color:#d9e7ee}.asset-profile{width:100%;height:105px;display:block;cursor:crosshair;background:#102634;border-radius:6px}.asset-profile[hidden]{display:none}.signal[role=button]{cursor:pointer}.signal.asset-selected{outline:1px solid #ffce83!important;border-radius:4px}@media(max-width:650px){.asset-inspector .controls label{max-width:100%}.asset-inspector select{width:100%}}
 </style></head>
 <body>
 <section id="panel" aria-label="直观模型演示">
 <header><div><h2 id="title"></h2><div id="subtitle"></div></div><span class="badge" id="status">已暂停 · 当前参数</span></header>
-<div class="layout"><div id="view" tabindex="0" aria-label="三维模型，可拖动旋转"><div class="legend" id="legend"></div><div class="view-hint">拖动旋转 · 不使用滚轮缩放 · 可复位视角</div></div><aside><div class="metrics" id="metrics"></div><div><div class="signals-title" id="signals-title"></div><div id="signals"></div></div></aside></div>
-<div class="controls"><button id="play" class="primary">播放</button><button id="replay">重播</button><button id="current">当前参数</button><button id="reset">复位视角</button><button id="fullscreen">全屏</button><label class="speed">速度<select id="speed" aria-label="播放速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option></select></label></div>
+<div class="layout"><div id="view" tabindex="0" aria-label="三维模型；方向键旋转，Home 复位，空格播放或暂停"><div class="legend" id="legend"></div><div class="view-hint">拖动／方向键旋转 · Home 复位 · 空格播放</div></div><aside><div class="metrics" id="metrics"></div><div><div class="signals-title" id="signals-title"></div><div id="signals"></div></div></aside></div>
+<div class="controls"><button id="play" class="primary">播放演示</button><button id="current">当前参数</button><button id="reset">复位视角</button><button id="fullscreen">全屏</button></div>
 <div id="progress-row"><input id="progress" type="range" min="0" step="1" aria-label="演示进度"><output id="percent"></output></div>
+<details class="view-settings"><summary>更多播放与显示选项</summary><div class="controls"><button id="replay">从头重播</button><label class="speed">速度<select id="speed" aria-label="播放速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option></select></label><button id="grid-toggle" aria-pressed="true">辅助网格</button><button id="labels-toggle" aria-pressed="true">部件标签</button></div><span class="layer-note">辅助图层不影响测点与数据。</span></details>
+<p id="scale-note"></p>
 <div id="caption"></div><div id="motion-note"></div><p id="boundary"></p>
 </section>
 <script id="demo-config" type="application/json">__CONFIG__</script>
 <script>__THREE_RUNTIME__</script>
+<script>__READOUT_RUNTIME__</script>
+<script>__ASSET_RUNTIME__</script>
 <script>
 (() => {
   'use strict';
   const cfg=JSON.parse(document.getElementById('demo-config').textContent);
   const el=id=>document.getElementById(id), frames=cfg.frames, view=el('view');
   el('panel').dataset.kind=cfg.kind;
+  const currentLabel=cfg.current_label || '当前参数';el('current').textContent=currentLabel;el('status').textContent='已暂停 · '+currentLabel;
   el('title').textContent=cfg.title;el('subtitle').textContent=cfg.subtitle;el('boundary').textContent=cfg.boundary;
   el('signals-title').textContent=cfg.signal_title || (cfg.kind==='skin'?'温补 FBG 波长 · nm':'FBG 波长漂移 · nm');
   el('legend').textContent=cfg.legend || (cfg.kind==='shape'?'青色实体：真实形状 · 橙线：反演中心线':cfg.kind==='foot'?'六区反演载荷：蓝 → 橙 · 白点：真实 CoP · 橙环：反演 CoP':'表面形变：接触示意 · 光点：温补 FBG 响应 · 橙环：估计质心');
   if(matchMedia('(prefers-reduced-motion: reduce)').matches)el('motion-note').textContent='减少动态效果模式：默认暂停，也可拖动进度逐帧查看。';
   const metricValues=frames[0].metrics.map(([name])=>{const cell=document.createElement('div');cell.className='metric';const label=document.createElement('span');label.textContent=name;const value=document.createElement('strong');cell.append(label,value);el('metrics').append(cell);return value;});
-  if(cfg.labels.length>8&&cfg.kind!=='taxel')el('signals').classList.add('dense');
-  const signals=cfg.labels.map(name=>{const row=document.createElement('div');row.className='signal';const label=document.createElement('span');label.className='signal-name';label.textContent=name;const value=document.createElement('span');value.className='signal-value';const track=document.createElement('div');track.className='track';const bar=document.createElement('div');bar.className='bar';track.append(bar);row.append(label,value,track);el('signals').append(row);return {value,bar};});
+  if(cfg.labels.length>8&&(cfg.kind!=='taxel'||cfg.labels.length>9))el('signals').classList.add('dense');
+  const signals=cfg.labels.map((name,i)=>{const row=document.createElement('div');row.className='signal';if((['skin','health','foot'].includes(cfg.kind) && cfg.inspection_channel===i)||(cfg.kind==='taxel' && i>=9)){row.style.outline='1px solid white';row.style.borderRadius='4px';}const label=document.createElement('span');label.className='signal-name';label.textContent=name;const value=document.createElement('span');value.className='signal-value';const track=document.createElement('div');track.className='track';const bar=document.createElement('div');bar.className='bar';track.append(bar);row.append(label,value,track);el('signals').append(row);return {value,bar,element:row};});
   const maxSignal=Math.max(1e-9,...frames.flatMap(f=>f.signals.filter(Number.isFinite).map(Math.abs)));
+  const sceneLabels=[];let gridLayer,asset=null,assetInspector=null;
   let renderer, scene, camera, updateScene=()=>{}, radius=100, target, framing=[], yaw=cfg.mechanism==='偏振态'?.18:['taxel','pressure'].includes(cfg.kind)?0:.65, elevation=cfg.mechanism==='偏振态'?.22:.65;
   const defaultYaw=yaw,defaultElevation=elevation;
   const color=t=>new THREE.Color().setHSL(.55-Math.max(0,Math.min(1,t))*.49,.74,.48+Math.max(0,Math.min(1,t))*.13);
@@ -45,66 +52,82 @@ aside{min-width:0;display:flex;flex-direction:column;gap:12px}.metrics{display:g
   function linePoints(value,points){value.geometry.dispose();value.geometry=new THREE.BufferGeometry().setFromPoints(points);}
   function marker(c,size=2){return mesh(new THREE.SphereGeometry(size,16,12),material(c,{emissive:c,emissiveIntensity:.15}));}
   function ring(c,size=3){const value=mesh(new THREE.TorusGeometry(size,.55,8,24),material(c,{depthTest:false}));value.rotation.x=Math.PI/2;value.renderOrder=8;return value;}
-  function label(text,position,width=50){const canvas=document.createElement('canvas');canvas.width=256;canvas.height=48;const ctx=canvas.getContext('2d');ctx.fillStyle='#0d2130';ctx.fillRect(0,0,256,48);ctx.font='26px sans-serif';ctx.fillStyle='#d8eef7';ctx.textAlign='center';ctx.fillText(text,128,34);const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(canvas),depthTest:false}));sprite.position.copy(position);sprite.scale.set(width,width*48/256,1);scene.add(sprite);return sprite;}
+  function label(text,position,width=50){const canvas=document.createElement('canvas');canvas.width=256;canvas.height=48;const ctx=canvas.getContext('2d');ctx.fillStyle='#0d2130';ctx.fillRect(0,0,256,48);ctx.font='26px sans-serif';ctx.fillStyle='#d8eef7';ctx.textAlign='center';ctx.fillText(text,128,34);const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(canvas),depthTest:false}));sprite.position.copy(position);sprite.scale.set(width,width*48/256,1);scene.add(sprite);sceneLabels.push(sprite);return sprite;}
   function fitCamera(){if(!renderer)return;const w=view.clientWidth,h=view.clientHeight;if(!w||!h)return;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h,false);const forward=vec(Math.cos(elevation)*Math.sin(yaw),Math.sin(elevation),Math.cos(elevation)*Math.cos(yaw)),right=vec(0,1,0).cross(forward).normalize(),up=forward.clone().cross(right),tangent=Math.tan(camera.fov*Math.PI/360);let distance=30;for(const point of framing){const offset=point.clone().sub(target);distance=Math.max(distance,offset.dot(forward)+Math.max(Math.abs(offset.dot(right))/(tangent*w/h),Math.abs(offset.dot(up))/tangent));}distance=distance*1.1+6;camera.position.copy(target).addScaledVector(forward,distance);camera.lookAt(target);renderer.render(scene,camera);}
   try{
     scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(35,1,.1,10000);renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));view.prepend(renderer.domElement);
     scene.add(new THREE.HemisphereLight(0xe7f8ff,0x173143,2.4));const light=new THREE.DirectionalLight(0xffffff,2.5);light.position.set(100,200,150);scene.add(light);
     const bounds=new THREE.Box3();
+    asset=createLabAsset(THREE,scene,cfg.asset);
     if(cfg.kind==='skin'){
       const {width:w,height:h}=cfg;
-      const surface=new THREE.PlaneGeometry(w,h,32,24);surface.rotateX(-Math.PI/2);surface.setAttribute('color',new THREE.BufferAttribute(new Float32Array(surface.attributes.position.count*3),3));
-      mesh(new THREE.BoxGeometry(w+2,3,h+2),material(0x344c5f)).position.y=-7;
-      mesh(surface,material(0x78cbbb,{vertexColors:true,side:THREE.DoubleSide}));
-      const dots=cfg.sensors.map(()=>marker(0x86e8d4,1.4));
+      const surface=asset?null:new THREE.PlaneGeometry(w,h,32,24);
+      if(surface){surface.rotateX(-Math.PI/2);surface.setAttribute('color',new THREE.BufferAttribute(new Float32Array(surface.attributes.position.count*3),3));
+        mesh(new THREE.BoxGeometry(w+2,3,h+2),material(0x344c5f)).position.y=-7;
+        mesh(surface,material(0x78cbbb,{vertexColors:true,side:THREE.DoubleSide}));}
+      const dots=cfg.sensors.map((_,i)=>{const dot=marker(0x86e8d4,1.4);return asset?asset.attach(i,dot):dot;});
+      const sensorWorld=i=>asset?asset.world(cfg.asset.bindings[i].id):dots[i].position.clone();
+      const selectedRing=Number.isInteger(cfg.inspection_channel)?ring(0xffffff,2.6):null;
       const indenters=frames[0].touches.map(()=>mesh(new THREE.SphereGeometry(5,24,16),material(0xe4eaf0,{metalness:.5})));
       const centroid=ring(0xffb75d,3),fiber=line(0x8ce8d5,[vec(0,0,0),vec(1,0,0)]);
       const rows=[...new Set(cfg.sensors.map(p=>p[1]))];
       const path=rows.flatMap((y,i)=>{const row=cfg.sensors.map((p,j)=>[p,j]).filter(([p])=>p[1]===y).map(([,j])=>j);return i%2?row.reverse():row;});
       function heightAt(x,y,f){return -Math.min(4.7,f.touches.reduce((sum,[tx,ty,force])=>sum+force*.35*Math.exp(-((x-tx)**2+(y-ty)**2)/(2*cfg.receptive_width**2)),0));}
       updateScene=f=>{
-        const p=surface.attributes.position,c=surface.attributes.color;
-        for(let i=0;i<p.count;i++){const depth=heightAt(p.getX(i)+w/2,h/2-p.getZ(i),f);p.setY(i,depth);const tone=color(-depth/4.7);c.setXYZ(i,tone.r,tone.g,tone.b);}p.needsUpdate=true;c.needsUpdate=true;surface.computeVertexNormals();
-        dots.forEach((dot,i)=>{const [x,y]=cfg.sensors[i];dot.position.set(x-w/2,heightAt(x,y,f)+1.1,h/2-y);dot.material.color.copy(color(f.signals[i]/cfg.color_max));});
-        linePoints(fiber,path.map(i=>dots[i].position.clone()));
-        indenters.forEach((press,i)=>{const [x,y,force]=f.touches[i];press.position.set(x-w/2,heightAt(x,y,f)+5+(force>1e-9?.3:9),h/2-y);});
-        centroid.visible=!!f.centroid;if(f.centroid)centroid.position.set(f.centroid[0]-w/2,2,h/2-f.centroid[1]);
+        if(asset)asset.deformSkin((x,z)=>heightAt(x+w/2,h/2-z,f));
+        else {const p=surface.attributes.position,c=surface.attributes.color;
+          for(let i=0;i<p.count;i++){const depth=heightAt(p.getX(i)+w/2,h/2-p.getZ(i),f);p.setY(i,depth);const tone=color(-depth/4.7);c.setXYZ(i,tone.r,tone.g,tone.b);}p.needsUpdate=true;c.needsUpdate=true;surface.computeVertexNormals();}
+        dots.forEach((dot,i)=>{const [x,y]=cfg.sensors[i];if(!asset)dot.position.set(x-w/2,heightAt(x,y,f)+1.1,h/2-y);dot.material.color.copy(Number.isFinite(f.signals[i])?color(f.signals[i]/cfg.color_max):new THREE.Color(0x737e89));});
+        if(selectedRing)selectedRing.position.copy(sensorWorld(cfg.inspection_channel));
+        linePoints(fiber,path.map(sensorWorld));
+        indenters.forEach((press,i)=>{const [x,y,force]=f.touches[i];press.position.set(x-w/2,heightAt(x,y,f)+5+(force>1e-9?.3:9)+(asset?asset.explosion*21:0),h/2-y);});
+        centroid.visible=!!f.centroid;if(f.centroid)centroid.position.set(f.centroid[0]-w/2,2+(asset?asset.explosion*21:0),h/2-f.centroid[1]);
       };
-      bounds.expandByPoint(vec(-w/2-8,-8,-h/2-8));bounds.expandByPoint(vec(w/2+8,26,h/2+8));
+      bounds.expandByPoint(vec(-w/2-8,asset?-14:-8,-h/2-8));bounds.expandByPoint(vec(w/2+8,asset?43:26,h/2+8));
     }else if(cfg.kind==='foot'){
+      const patches=[],centers=[];
+      if(asset){
+        cfg.asset.bindings.forEach((b,i)=>{const patch=asset.parts.get(b.part).userData.mesh;patches.push(patch);asset.attach(i,marker(0xc9fff4,1.5));centers.push(asset.world(b.id));});
+      }else{
       const sole=new THREE.Shape();sole.moveTo(-38,82);sole.quadraticCurveTo(-49,80,-47,25);sole.quadraticCurveTo(-42,3,-47,-40);sole.quadraticCurveTo(-57,-92,-3,-92);sole.quadraticCurveTo(56,-90,51,-42);sole.quadraticCurveTo(44,2,45,25);sole.quadraticCurveTo(49,80,38,82);sole.quadraticCurveTo(0,90,-38,82);
       const geometry=new THREE.ExtrudeGeometry(sole,{depth:7,bevelEnabled:true,bevelSize:2,bevelThickness:1,bevelSegments:3,curveSegments:24});geometry.rotateX(-Math.PI/2);geometry.rotateY(Math.PI);mesh(geometry,material(0x6b8795));
-      const patches=[],centers=[];
+
       for(let i=0;i<6;i++){const x=(i%3-1)*27,z=i<3?-43:43;const patch=mesh(new THREE.BoxGeometry(24,2,60),material(0x32b8bc));patch.position.set(x,9,z);patches.push(patch);centers.push(vec(x,11,z));marker(0xc9fff4,1.5).position.copy(centers[i]);}
+      }
       line(0xc3eede,[0,1,2,5,4,3].map(i=>centers[i]));
+      if(Number.isInteger(cfg.inspection_channel)){const p=centers[cfg.inspection_channel];const border=line(0xffffff,[vec(p.x-12,12,p.z-30),vec(p.x+12,12,p.z-30),vec(p.x+12,12,p.z+30),vec(p.x-12,12,p.z+30),vec(p.x-12,12,p.z-30)],false);border.renderOrder=10;}
+
       const truth=marker(0xffffff,2.5),estimate=ring(0xffb75d,5);
       const copPosition=p=>vec((p[0]-1.45)*27,14,(.92-p[1])*86);
       const trail=line(0xffb75d,[vec(0,14,43),vec(0,14,43)],false);trail.renderOrder=7;
-      updateScene=(f,index)=>{patches.forEach((patch,i)=>patch.material.color.copy(color(f.loads[i]/cfg.color_max)));truth.visible=!!f.true_cop;estimate.visible=!!f.cop;if(f.true_cop)truth.position.copy(copPosition(f.true_cop));if(f.cop)estimate.position.copy(copPosition(f.cop));const points=frames.slice(0,index+1).filter(p=>p.cop).map(p=>copPosition(p.cop));trail.visible=points.length>1;if(points.length>1)linePoints(trail,points);estimate.material.color.set(f.reliable?0xffb75d:0xa8a8a8);};
+      updateScene=(f,index)=>{patches.forEach((patch,i)=>patch.material.color.copy(f.valid_loads && !f.valid_loads[i]?new THREE.Color(0x737e89):color(f.loads[i]/cfg.color_max)));truth.visible=!!f.true_cop;estimate.visible=!!f.cop;if(f.true_cop)truth.position.copy(copPosition(f.true_cop));if(f.cop)estimate.position.copy(copPosition(f.cop));const points=frames.slice(0,index+1).filter(p=>p.cop).map(p=>copPosition(p.cop));trail.visible=points.length>1;if(points.length>1)linePoints(trail,points);estimate.material.color.set(f.reliable?0xffb75d:0xa8a8a8);};
       bounds.expandByPoint(vec(-55,-3,-95));bounds.expandByPoint(vec(55,20,95));
     }else if(cfg.kind==='assembly'){
       const names=['耐磨外底','分区传力','隔离膜','密封圈','定位锁止','固定感知芯','基板限位'];
       const palette=[0x56768b,0xe9b26c,0x7cc7cd,0x344758,0xa7bac9,0x4ecbb3,0x829bad],heights=[0,7,13,16,19,27,32];
-      const layers=names.map((name,i)=>{const group=new THREE.Group();scene.add(group);
+      const layers=names.map((name,i)=>{const group=asset?asset.parts.get(`ASSEMBLY-L${i+1}`):new THREE.Group();if(!asset){scene.add(group);
         if([0,2,5,6].includes(i)){const shape=new THREE.Shape();shape.absellipse(0,0,43,83,0,Math.PI*2,false,0);const geometry=new THREE.ExtrudeGeometry(shape,{depth:i===0?6:2,bevelEnabled:false,curveSegments:32});geometry.rotateX(-Math.PI/2);mesh(geometry,material(palette[i],{transparent:true,opacity:i===2?.42:i===6?.55:.9}),group);}
         if(i===1)for(let k=0;k<6;k++){const block=mesh(new THREE.BoxGeometry(23,5,46),material(palette[i]),group);block.position.set((k%3-1)*25,2,k<3?-35:35);}
         if(i===3){const seal=mesh(new THREE.TorusGeometry(1,.05,8,64),material(palette[i]),group);seal.rotation.x=Math.PI/2;seal.scale.set(39,78,18);}
         if(i===4)for(const x of [-29,29])for(const z of [-53,53]){const pin=mesh(new THREE.CylinderGeometry(2.4,2.4,10,12),material(palette[i]),group);pin.position.set(x,2,z);}
+        }
         const canvas=document.createElement('canvas');canvas.width=256;canvas.height=48;const context=canvas.getContext('2d');context.fillStyle='#0c1927';context.fillRect(0,0,256,48);context.fillStyle='#def6ff';context.font='26px sans-serif';context.fillText(`${i+1} ${name}`,10,34);const label=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(canvas),depthTest:false}));label.scale.set(65,12,1);group.add(label);label.position.set(84,3,0);
         return {group,label};});
-      const dots=[marker(0x67ead5,2.8),marker(0x67ead5,2.8),marker(0x9bbbea,2.8)];
+      const dots=[marker(0x67ead5,2.8),marker(0x67ead5,2.8),marker(0x9bbbea,2.8)];if(asset)dots.forEach((dot,i)=>asset.attach(i,dot));
       const fiber=line(0x90ead6,[vec(-14,30,0),vec(14,30,0),vec(23,30,34)]);
-      updateScene=f=>{layers.forEach(({group,label},i)=>{group.position.y=heights[i]-(6-i)*15*f.explosion;group.position.x=i<3?cfg.lateral_offset_mm*4*(1-f.explosion):0;if(i<3)group.position.y-=cfg.insertion_deficit_mm*4*(1-f.explosion);label.visible=f.explosion>.15;});const y=layers[5].group.position.y+3;dots.forEach((dot,i)=>{dot.position.set(i===0?-14:i===1?14:23,y,i===2?34:0);dot.material.color.set(f.seated?i===2?0x9bbbea:0x67ead5:0x536975);});linePoints(fiber,dots.map(dot=>dot.position.clone()));};
+      updateScene=f=>{layers.forEach(({group,label},i)=>{group.position.y=heights[i]-(6-i)*15*f.explosion;group.position.x=i<3?cfg.lateral_offset_mm*4*(1-f.explosion):0;if(i<3)group.position.y-=cfg.insertion_deficit_mm*4*(1-f.explosion);label.visible=f.explosion>.15;});const y=layers[5].group.position.y+3;dots.forEach((dot,i)=>{if(!asset)dot.position.set(i===0?-14:i===1?14:23,y,i===2?34:0);dot.material.color.set(f.seated?i===2?0x9bbbea:0x67ead5:0x536975);});linePoints(fiber,dots.map((dot,i)=>asset?asset.world(cfg.asset.bindings[i].id):dot.position.clone()));};
       bounds.expandByPoint(vec(-50,-96,-88));bounds.expandByPoint(vec(119,43,88));
     }else if(cfg.kind==='health'){
-      mesh(new THREE.BoxGeometry(520,24,32),material(0x527386));
-      for(const x of [-230,230]){const support=mesh(new THREE.BoxGeometry(20,24,50),material(0x324956));support.position.set(x,-24,0);}
-      const dots=cfg.sensors.map(x=>{const dot=marker(0x68e1d0,5);dot.position.set(x-260,19,0);return dot;});
+      if(!asset){mesh(new THREE.BoxGeometry(520,24,32),material(0x527386));
+      for(const x of [-230,230]){const support=mesh(new THREE.BoxGeometry(20,24,50),material(0x324956));support.position.set(x,-24,0);}}
+      const dots=cfg.sensors.map((x,i)=>{const dot=marker(0x68e1d0,5);dot.position.set(x-260,19,0);return asset?asset.attach(i,dot):dot;});
       line(0x83dcce,dots.map(dot=>dot.position.clone()));
+      if(Number.isInteger(cfg.inspection_channel)){const selectedRing=ring(0xffffff,8);selectedRing.position.copy(dots[cfg.inspection_channel].position);}
+
       const truth=mesh(new THREE.TorusGeometry(23,2,8,32),material(0xfa8979,{transparent:true,opacity:.8}));truth.rotation.y=Math.PI/2;
       const interval=mesh(new THREE.BoxGeometry(1,10,46),material(0xffb75d,{transparent:true,opacity:.35,depthTest:false}));interval.renderOrder=6;
       const estimate=marker(0xffc77d,6);estimate.renderOrder=7;
-      updateScene=f=>{dots.forEach((dot,i)=>dot.material.color.copy(color(Math.abs(f.signals[i])/maxSignal)));truth.visible=f.truth_location!==null;if(truth.visible){truth.position.x=f.truth_location-260;truth.material.opacity=.2+.7*f.severity;}interval.visible=estimate.visible=f.suspected!==null;if(f.suspected!==null){const left=Math.max(0,f.suspected-f.uncertainty),right=Math.min(520,f.suspected+f.uncertainty);interval.position.set((left+right)/2-260,23,0);interval.scale.x=right-left;estimate.position.set(f.suspected-260,33,0);}};
+      updateScene=f=>{dots.forEach((dot,i)=>dot.material.color.copy(Number.isFinite(f.signals[i])?color(Math.abs(f.signals[i])/maxSignal):new THREE.Color(0x737e89)));truth.visible=f.truth_location!==null;if(truth.visible){truth.position.x=f.truth_location-260;truth.material.opacity=.2+.7*f.severity;}interval.visible=estimate.visible=f.suspected!==null;if(f.suspected!==null){const left=Math.max(0,f.suspected-f.uncertainty),right=Math.min(520,f.suspected+f.uncertainty);interval.position.set((left+right)/2-260,23,0);interval.scale.x=right-left;estimate.position.set(f.suspected-260,33,0);}};
       bounds.expandByPoint(vec(-275,-40,-30));bounds.expandByPoint(vec(275,42,30));
     }else if(cfg.kind==='fbg'){
       const fiber=mesh(new THREE.CylinderGeometry(2,2,150,16),material(0x83d8ce,{transparent:true,opacity:.7}));fiber.rotation.z=Math.PI/2;
@@ -120,6 +143,8 @@ aside{min-width:0;display:flex;flex-direction:column;gap:12px}.metrics{display:g
       const points=cfg.positions.map((position,i)=>vec(x(position),15+(cfg.profile[i]-cfg.background)/amplitude*55,0));
       mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),points.length*2,.65,6,false),material(0x62d3d0,{transparent:true,opacity:.45}));const read=mesh(new THREE.BufferGeometry(),material(0xffb75d,{emissive:0x7d491b,emissiveIntensity:.4})),cursor=marker(0xffddaa,3);
       const fiber=mesh(new THREE.CylinderGeometry(1.5,1.5,250,12),material(0x67d8cc));fiber.rotation.z=Math.PI/2;fiber.position.y=-50;
+      if(Number.isInteger(cfg.inspection_index)){const pin=mesh(new THREE.BoxGeometry(5,5,5),material(0xc19bef,{depthTest:false}));pin.position.set(x(cfg.positions[cfg.inspection_index]),-50,0);pin.renderOrder=10;}
+
       const device=mesh(new THREE.BoxGeometry(16,22,20),material(0x71899c));device.position.set(-141,-50,0);
       const truth=marker(0xffffff,3),estimate=marker(0xffb75d,4);truth.visible=cfg.truth!==null;if(truth.visible)truth.position.set(x(cfg.truth),-40,0);
       label('0 mm',vec(-125,-69,0),35);label(`${cfg.length} mm`,vec(125,-69,0),42);
@@ -135,7 +160,8 @@ aside{min-width:0;display:flex;flex-direction:column;gap:12px}.metrics{display:g
         const arrows=colors.map((c,j)=>{const arrow=new THREE.ArrowHelper(axes[j],vec(x,8,0),35,c,6,4);scene.add(arrow);arrow.line.visible=false;const shaft=mesh(new THREE.CylinderGeometry(.7,.7,1,10),material(c),arrow);return {arrow,shaft};});
         groups.push(arrows);
       });
-      updateScene=f=>[f.truth,f.raw,f.corrected].forEach((values,i)=>values.forEach((v,j)=>{const {arrow,shaft}=groups[i][j],length=Math.abs(v)/cfg.force_max*42,head=Math.min(6,length*.3);arrow.visible=length>.01;arrow.setDirection(axes[j].clone().multiplyScalar(v<0?-1:1));arrow.setLength(Math.max(.01,length),head,Math.min(4,length*.2));shaft.scale.y=Math.max(.001,length-head);shaft.position.y=shaft.scale.y/2;}));
+      if(Number.isInteger(cfg.inspection_channel)){groups.push(axes.map(axis=>{const arrow=new THREE.ArrowHelper(axis,vec(88,8,0),10,0xffffff,3,2);arrow.line.material.depthTest=false;arrow.cone.material.depthTest=false;arrow.line.renderOrder=11;arrow.cone.renderOrder=11;scene.add(arrow);return {arrow,shaft:null};}));}
+      updateScene=f=>[f.truth,f.raw,f.corrected,...(groups.length===4?[f.contribution]:[])].forEach((values,i)=>values.forEach((v,j)=>{const {arrow,shaft}=groups[i][j],length=Math.abs(v)/cfg.force_max*42,head=Math.min(6,length*.3);arrow.visible=length>.01;arrow.setDirection(axes[j].clone().multiplyScalar(v<0?-1:1));arrow.setLength(Math.max(.01,length),head,Math.min(4,length*.2));if(shaft){shaft.scale.y=Math.max(.001,length-head);shaft.position.y=shaft.scale.y/2;}}));
       bounds.expandByPoint(vec(-142,-38,-52));bounds.expandByPoint(vec(142,55,53));
     }else if(cfg.kind==='pressure'){
       const n=cfg.truth.length,k=cfg.samples.length,scale=42/cfg.pressure_max;
@@ -154,7 +180,16 @@ aside{min-width:0;display:flex;flex-direction:column;gap:12px}.metrics{display:g
       const errorStart=location(94,errorRow,errorCol,n,cfg.truth[errorRow][errorCol]),errorEnd=location(94,errorRow,errorCol,n,cfg.reconstruction[errorRow][errorCol]);
       const error=mesh(new THREE.CylinderGeometry(.9,.9,Math.max(.01,errorStart.distanceTo(errorEnd)),12),material(0xff756a,{depthTest:false}));error.position.copy(errorStart).add(errorEnd).multiplyScalar(.5);error.renderOrder=9;
       const errorDot=marker(0xff756a,2.4);errorDot.position.copy(errorEnd);
-      updateScene=f=>{samples.forEach((dot,i)=>dot.visible=i<f.read_count);reconstruction.geometry.setDrawRange(0,Math.max(0,f.row_count-1)*(n-1)*6);error.visible=errorDot.visible=f.row_count===n;};
+      const selected=cfg.inspection_node, selectedDots=[];
+      if(selected){
+        [[-94,cfg.truth],[94,cfg.reconstruction]].forEach(([offset,field])=>{
+          const dot=marker(0xffcf69,2.8);dot.material.depthTest=false;dot.renderOrder=12;
+          dot.position.copy(location(offset,selected.row,selected.col,n,field[selected.row][selected.col]));selectedDots.push(dot);
+        });
+      }
+      updateScene=f=>{samples.forEach((dot,i)=>dot.visible=i<f.read_count);reconstruction.geometry.setDrawRange(0,Math.max(0,f.row_count-1)*(n-1)*6);error.visible=errorDot.visible=f.row_count===n;
+        if(selected)selectedDots[1].visible=f.row_count>=Math.max(2,selected.row+1);
+      };
       bounds.expandByPoint(vec(-139,-14,-41));bounds.expandByPoint(vec(139,51,59));
     }else if(cfg.kind==='dynamic'){
       const pad=mesh(new THREE.BoxGeometry(80,4,55),material(0x559eaa));pad.position.set(5,0,0);
@@ -222,35 +257,51 @@ aside{min-width:0;display:flex;flex-direction:column;gap:12px}.metrics{display:g
       const estimate=line(0xffb75d,[vec(0,0,0),vec(0,1,0)],false);estimate.renderOrder=8;
       const truthTip=marker(0xe6fffa,2.2),estimateTip=marker(0xffb75d,2.2);
       const collars=Array.from({length:7},()=>mesh(new THREE.TorusGeometry(3.3,.5,8,20),material(0x367787)));
-      updateScene=f=>{const points=f.truth.map(convert),predicted=f.estimate.map(convert);const curve=new THREE.CatmullRomCurve3(points);tube.geometry.dispose();tube.geometry=new THREE.TubeGeometry(curve,80,3,10,false);linePoints(estimate,predicted);truthTip.position.copy(points.at(-1));estimateTip.position.copy(predicted.at(-1));collars.forEach((collar,i)=>{const t=(i+1)/8;collar.position.copy(curve.getPointAt(t));collar.quaternion.setFromUnitVectors(vec(0,0,1),curve.getTangentAt(t));});};
+      const selected=cfg.inspection_node, selectedTruth=Number.isInteger(selected)?marker(0xffffff,3.5):null;
+      const selectedEstimate=selectedTruth?marker(0xffcf69,2.4):null, selectedError=selectedTruth?line(0xed91bd,[vec(0,0,0),vec(0,0,0)],false):null;
+      if(selectedTruth){[selectedTruth,selectedEstimate,selectedError].forEach((o,i)=>{o.material.depthTest=false;o.renderOrder=12+i;});}
+
+      updateScene=f=>{const points=f.truth.map(convert),predicted=f.estimate.map(convert);const curve=new THREE.CatmullRomCurve3(points);tube.geometry.dispose();tube.geometry=new THREE.TubeGeometry(curve,80,3,10,false);linePoints(estimate,predicted);truthTip.position.copy(points.at(-1));estimateTip.position.copy(predicted.at(-1));if(selectedTruth){selectedTruth.position.copy(points[selected]);selectedEstimate.position.copy(predicted[selected]);linePoints(selectedError,[points[selected],predicted[selected]]);}collars.forEach((collar,i)=>{const t=(i+1)/8;collar.position.copy(curve.getPointAt(t));collar.quaternion.setFromUnitVectors(vec(0,0,1),curve.getTangentAt(t));});};
       bounds.expandByPoint(vec(-16,-10,-16));bounds.expandByPoint(vec(16,10,16));
     }
     target=bounds.getCenter(new THREE.Vector3());radius=Math.max(30,bounds.getSize(new THREE.Vector3()).length()/2+6);for(const x of [bounds.min.x,bounds.max.x])for(const y of [bounds.min.y,bounds.max.y])for(const z of [bounds.min.z,bounds.max.z])framing.push(vec(x,y,z));
-    const grid=new THREE.GridHelper(radius*2.7,12,0x32546a,0x203949);grid.position.y=bounds.min.y-4;scene.add(grid);
-  }catch(error){renderer?.dispose();renderer=undefined;const hint=document.createElement('p');hint.className='fallback';hint.textContent='当前浏览器无法启用 WebGL。可继续查看右侧读数，或使用下方实验图表。';view.prepend(hint);el('reset').disabled=true;}
+    const grid=new THREE.GridHelper(radius*2.7,12,0x32546a,0x203949);grid.position.y=bounds.min.y-4;scene.add(grid);gridLayer=grid;
+  }catch(error){renderer?.dispose();renderer=undefined;const hint=document.createElement('p');hint.className='fallback';hint.textContent='当前浏览器无法启用 WebGL。可继续查看右侧读数，或使用下方实验图表。';view.prepend(hint);el('reset').disabled=true;el('grid-toggle').disabled=true;el('labels-toggle').disabled=true;}
+  if(asset && renderer){assetInspector=createLabAssetInspector(asset,THREE,cfg,view,signals,
+    i=>{stop('已暂停 · 扫描曲线定位');show(i);},()=>show(index));}
+  if(cfg.asset_warning)el('motion-note').textContent=cfg.asset_warning;
+  if(asset)el('boundary').textContent+=' '+cfg.asset.provenance+'；'+cfg.asset.coordinates+'。金框为本演示内选择，白环保留下方观察器选择。';
+  if(cfg.kind==='skin' && asset)el('legend').textContent+=' · 颜色 0 → '+cfg.color_max.toFixed(4)+' nm；负值显示在读数，缺测灰色';
+  if(cfg.kind==='foot' && asset)el('legend').textContent+=' · 区域色阶 0 → '+cfg.color_max.toFixed(2)+' N';
+  if(cfg.kind==='health' && asset)el('legend').textContent+=' · 光点色阶 |Δλ| 0 → '+maxSignal.toFixed(4)+' nm';
+  if(renderer && !sceneLabels.length){el('labels-toggle').hidden=true;}
+  el('grid-toggle').onclick=()=>{if(!gridLayer)return;demoSetLayerVisibility([gridLayer],!gridLayer.visible);el('grid-toggle').setAttribute('aria-pressed',String(gridLayer.visible));fitCamera();};
+  el('labels-toggle').onclick=()=>{const visible=el('labels-toggle').getAttribute('aria-pressed')!=='true';demoSetLayerVisibility(sceneLabels,visible);el('labels-toggle').setAttribute('aria-pressed',String(visible));fitCamera();};
+  el('scale-note').textContent='读数条按本次完整演示的最大绝对值归一化，不宜跨参数比较条长；负值保留符号，缺测无条形。';
   let index=cfg.initial_index,playing=false,clock=0,lastTime=0,raf=0;
   const playbackDuration=cfg.playback_duration_ms || 6000;
   const slider=el('progress');slider.max=String(frames.length-1);
-  function show(i){index=Math.max(0,Math.min(frames.length-1,Math.round(i)));const f=frames[index];slider.value=String(index);el('percent').textContent=Math.round(f.progress*100)+'%';el('caption').textContent=f.caption;f.metrics.forEach(([,value],i)=>metricValues[i].textContent=value);f.signals.forEach((v,i)=>{signals[i].value.textContent=Number.isFinite(v)?(cfg.signal_format==='scientific'?v.toExponential(3):v.toFixed(4)):(cfg.pending_signal_text || '就位后读取');signals[i].bar.style.width=(Math.abs(v)/maxSignal*100)+'%';signals[i].bar.style.background=v<0?'#94baf4':'#67dcc6';});if(renderer){updateScene(f,index);fitCamera();}}
-  function stop(label='已暂停'){playing=false;cancelAnimationFrame(raf);el('play').textContent='播放';el('status').textContent=label;}
+  function show(i){index=Math.max(0,Math.min(frames.length-1,Math.round(i)));const f=frames[index];slider.value=String(index);el('percent').textContent=Math.round(f.progress*100)+'%';el('caption').textContent=f.caption+(cfg.inspection_text ? ' '+cfg.inspection_text : '')+(Number.isFinite(f.selected_error_mm)?' 本动画帧局部误差 '+f.selected_error_mm.toFixed(4)+' mm。':'');f.metrics.forEach(([,value],i)=>metricValues[i].textContent=value);f.signals.forEach((v,i)=>{const reading=demoSignalReadout(v,maxSignal,cfg.signal_format==='scientific',cfg.pending_signal_text);signals[i].value.textContent=reading.text;signals[i].bar.style.width=reading.width+'%';signals[i].bar.style.background=reading.color;});if(renderer){updateScene(f,index);if(assetInspector)assetInspector.update(f,index);fitCamera();}}
+  function stop(label='已暂停'){playing=false;cancelAnimationFrame(raf);el('play').textContent='播放演示';el('status').textContent=label;}
   function tick(now){if(!playing)return;if(document.hidden){stop();return;}clock+=(now-lastTime)*Number(el('speed').value);lastTime=now;const next=Math.min(frames.length-1,Math.floor(clock/playbackDuration*(frames.length-1)));if(next!==index)show(next);if(next===frames.length-1){stop('播放完成');return;}raf=requestAnimationFrame(tick);}
   function start(){if(index===frames.length-1)show(0);playing=true;clock=index/(frames.length-1)*playbackDuration;lastTime=performance.now();el('play').textContent='暂停';el('status').textContent='正在播放';raf=requestAnimationFrame(tick);}
   el('play').onclick=()=>playing?stop():start();
-  el('replay').onclick=()=>{stop();show(0);start();};el('current').onclick=()=>{stop('已暂停 · 当前参数');show(cfg.initial_index);};
+  el('replay').onclick=()=>{stop();show(0);start();};el('current').onclick=()=>{stop('已暂停 · '+currentLabel);show(cfg.initial_index);};
   slider.oninput=()=>{stop('已暂停 · 逐帧查看');show(Number(slider.value));};
   el('reset').onclick=()=>{yaw=defaultYaw;elevation=defaultElevation;fitCamera();};
   el('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await el('panel').requestFullscreen();}catch{el('status').textContent='当前环境不支持全屏';}};
   document.addEventListener('fullscreenchange',()=>{el('fullscreen').textContent=document.fullscreenElement?'退出全屏':'全屏';fitCamera();});
   let pointer=null;
-  view.addEventListener('pointerdown',event=>{pointer={id:event.pointerId,x:event.clientX,y:event.clientY};view.setPointerCapture(event.pointerId);});
-  view.addEventListener('pointermove',event=>{if(!pointer||pointer.id!==event.pointerId)return;yaw-=(event.clientX-pointer.x)*.006;elevation=Math.max(.12,Math.min(1.42,elevation+(event.clientY-pointer.y)*.006));pointer.x=event.clientX;pointer.y=event.clientY;fitCamera();});
-  const releasePointer=()=>{pointer=null;};view.addEventListener('pointerup',releasePointer);view.addEventListener('pointercancel',releasePointer);
-  view.addEventListener('keydown',event=>{if(event.code==='Space'){event.preventDefault();playing?stop():start();}});
+  view.addEventListener('pointerdown',event=>{pointer={id:event.pointerId,x:event.clientX,y:event.clientY,startX:event.clientX,startY:event.clientY,moved:false};view.setPointerCapture(event.pointerId);});
+  view.addEventListener('pointermove',event=>{if(!pointer||pointer.id!==event.pointerId)return;if(Math.hypot(event.clientX-pointer.startX,event.clientY-pointer.startY)>5)pointer.moved=true;yaw-=(event.clientX-pointer.x)*.006;elevation=Math.max(.12,Math.min(1.42,elevation+(event.clientY-pointer.y)*.006));pointer.x=event.clientX;pointer.y=event.clientY;fitCamera();});
+  const releasePointer=event=>{if(event.type==='pointerup'&&pointer&&!pointer.moved&&assetInspector)assetInspector.pick(event,camera);pointer=null;};view.addEventListener('pointerup',releasePointer);view.addEventListener('pointercancel',releasePointer);
+  view.addEventListener('keydown',event=>{if(event.code==='Space'){event.preventDefault();playing?stop():start();return;}const pose=demoViewKey(event.code,yaw,elevation,{yaw:defaultYaw,elevation:defaultElevation});if(!pose)return;event.preventDefault();yaw=pose.yaw;elevation=pose.elevation;fitCamera();});
   new ResizeObserver(fitCamera).observe(view);
   new IntersectionObserver(entries=>{if(!entries[0].isIntersecting&&playing)stop('离开演示 · 已暂停');}).observe(el('panel'));
   document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
   addEventListener('pagehide',()=>{stop();renderer?.dispose();});
   show(cfg.initial_index);
+  if(assetInspector)assetInspector.initialize();
 })();
 </script>
 </body></html>

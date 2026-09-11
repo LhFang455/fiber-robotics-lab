@@ -57,4 +57,12 @@ def frame_html(document: str, *, key: str, height: int | None = None,
 def render_html(document: str, *, key: str, height: int | None = None,
                 title: str = "仿真实验视图") -> None:
     # Only generated project HTML goes here; arbitrary uploaded HTML is not accepted.
+    if key in {"planar-hand", "spatial-hand"}:
+        # Streamlit retains the iframe element across reruns. A data URL keeps
+        # the child opaque-origin without our former replaceChildren reload.
+        source = "data:text/html;charset=utf-8;base64," + base64.b64encode(
+            ("<style>html,body{background:#0e1117;margin:0;overflow:hidden}</style>" + document).encode()
+        ).decode()
+        st.iframe(source, height=height or 650, tab_index=0)
+        return
     st.html(frame_html(document, key=key, height=height, title=title), unsafe_allow_javascript=True)

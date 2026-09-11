@@ -13,7 +13,7 @@ import streamlit as st
 
 from fiber_robotics_sim import (
     demo_views, embedded_view, eskin, eskin_experiments, eskin_visuals, experiments, models, visuals,
-    showcase,
+    showcase, thumb_inspector, foot_inspector, shape_inspector, health_inspector, distributed_inspector, skin_inspector, pressure_inspector, dynamic_inspector, taxel_inspector, pressure_comparison, taxel_comparison, skin_comparison, dynamic_comparison,
 )
 
 
@@ -34,6 +34,32 @@ LAB_SECTIONS = {
     "optics": ("分布式感知", "偏振与干涉", "数据兼容"),
     "eskin": ("三轴触觉单元", "FBG 光学皮肤", "稀疏压力重建", "动态滑移与多模态"),
 }
+
+EXPERIMENT_TARGETS = {
+    section: (LAB_LABELS[index], f"{domain}_navigation", section)
+    for index, (domain, sections) in enumerate(LAB_SECTIONS.items(), start=1)
+    for section in sections
+}
+
+
+def open_quick_experiment() -> None:
+    selected = st.session_state.quick_experiment
+    if selected is not None:
+        select_main_tab(*EXPERIMENT_TARGETS[selected])
+        st.session_state.quick_experiment = None
+
+
+def experiment_shortcuts(experiment_id: str) -> None:
+    st.markdown(f'<span id="start-{experiment_id}"></span>[跳到记录与导出 ↓](#exports-{experiment_id})', unsafe_allow_html=True)
+
+
+def export_heading(experiment_id: str) -> None:
+    st.subheader("记录与导出", anchor=f"exports-{experiment_id}")
+    st.markdown(f"[返回本页操作 ↑](#start-{experiment_id})")
+    if experiment_id not in {"planar", "three-d", "data", "assembly"}:
+        st.caption("基线 A 是你手动保存的结果；当前 B 随参数变化。先保存 A，再只改一个条件比较；导航不会自动清除基线。")
+    st.caption("下载只保存当前结果，不代表真实设备验证通过。完成后可返回页首继续调整，或从左侧选择下一实验。")
+
 
 FBG_SIMPLUS_TEMPLATE = (
     "% Generic eight-column input compatible with FBG-SimPlus\n"
@@ -86,8 +112,26 @@ div.st-key-three_d_grasp_metrics [data-testid="stMetricValue"] {font-size: 1.75r
 div[data-testid="stTabs"] button {font-size: .95rem; font-weight: 600;}
 div[data-testid="stTabs"] button p {font-size: .84rem;}
 div[data-testid="stTabs"] [role="tablist"] {gap: .15rem;}
+/* Child experiments: prominent titles, generous targets and a clear active state. */
+div[data-testid="stTabs"] [role="tabpanel"] [role="tablist"] {gap: .65rem; margin: .6rem 0 .8rem;}
+div[data-testid="stTabs"] [role="tabpanel"] [role="tab"] {
+ min-height: 52px; padding: .7rem 1rem; border: 1px solid rgba(128,128,128,.35);
+ border-radius: 10px; background: rgba(128,128,128,.07);
+}
+div[data-testid="stTabs"] [role="tabpanel"] [role="tab"] p {font-size: 1.15rem; font-weight: 700; line-height: 1.4;}
+div[data-testid="stTabs"] [role="tabpanel"] [role="tab"][aria-selected="true"] {
+ background: rgba(255,75,75,.14); border: 2px solid #ff4b4b;
+}
+div[data-testid="stTabs"] [role="tabpanel"] [role="tab"]:focus-visible {outline: 3px solid #ff4b4b; outline-offset: 2px;}
+
 .element-container {margin-bottom: .55rem;}
-[data-testid="stCaptionContainer"] p {text-align: center; text-align-last: left;}
+[data-testid="stCaptionContainer"] p {text-align: left;}
+@media (max-width: 640px) {
+ .block-container {padding: 1rem .85rem 2rem;}
+ h1 {font-size: 1.65rem !important;}
+ [data-testid="stHorizontalBlock"] {flex-wrap: wrap;}
+ [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {min-width: min(100%, 280px);}
+}
 h1 {letter-spacing: -.03em;}
 h2, h3 {margin-top: .6rem;}
 </style>""", unsafe_allow_html=True)
@@ -104,28 +148,34 @@ def csv_bytes(labels: list[str], values: np.ndarray) -> bytes:
 
 
 def module_learning_frame(
-    goal: str, action: str, observation: str, boundary: str
+    goal: str, action: str, observation: str, boundary: str, *, has_baseline: bool = True
 ) -> None:
-    """Render the same compact learning scaffold for content-rich modules."""
+    """Keep the first-use instructions visible before the simulation."""
     with st.container(border=True):
-        goal_column, action_column = st.columns(2)
-        goal_column.markdown("**学习目标**")
-        goal_column.write(goal)
-        action_column.markdown("**建议操作**")
-        action_column.write(action)
-        observation_column, boundary_column = st.columns(2)
-        observation_column.markdown("**重点观察**")
-        observation_column.write(observation)
-        boundary_column.markdown("**模型边界**")
-        boundary_column.write(boundary)
+        st.markdown(f"**本实验要回答：** {goal}")
+        operate, observe, record = st.columns(3)
+        with operate:
+            st.markdown("**1 · 动手操作**")
+            st.write(action)
+        with observe:
+            st.markdown("**2 · 看懂结果**")
+            st.write(observation)
+        with record:
+            st.markdown("**3 · 留下记录**")
+            st.write("点击页首‘跳到记录与导出’，保存本次数据或报告。")
+            if has_baseline:
+                st.caption("想比较条件时，先保存基线 A，再改变一个参数。")
+        st.caption("参数修改后自动计算，无需额外提交。模型内播放用于演示过程，不会替你修改实验参数。")
+    st.caption(f"模型边界：{boundary}")
 
 
 def module_directory(groups: list[tuple[str, list[tuple[int, str, str]]]]) -> None:
     """Render native module buttons that update the tracked tab widget."""
     for group_name, items in groups:
         st.caption(group_name)
-        columns = st.columns(3)
         for item_index, (tab_index, title, summary) in enumerate(items):
+            if item_index % 3 == 0:
+                columns = st.columns(3)
             with columns[item_index % 3]:
                 with st.container(border=True):
                     st.button(
@@ -136,6 +186,13 @@ def module_directory(groups: list[tuple[str, list[tuple[int, str, str]]]]) -> No
                         use_container_width=True,
                     )
                     st.caption(summary)
+                    domain = list(LAB_SECTIONS)[tab_index - 1]
+                    for section in LAB_SECTIONS[domain]:
+                        st.button(
+                            section, key=f"experiment_jump_{domain}_{section}",
+                            on_click=select_main_tab, args=EXPERIMENT_TARGETS[section],
+                            use_container_width=True,
+                        )
 
 
 def request_navigation(navigation_key: str, label: str) -> None:
@@ -194,8 +251,8 @@ def select_main_tab(
     request_navigation("main_navigation", tab_label)
     if section_key and section_label:
         request_navigation(section_key, section_label)
-    if "sidebar_module_navigation" in st.session_state:
-        st.session_state.sidebar_module_navigation = tab_label
+    # Apply before the sidebar widget mounts, including jumps from fragments.
+    st.session_state.sidebar_navigation_target = tab_label
 
 
 def select_sidebar_module() -> None:
@@ -365,16 +422,31 @@ def reset_guided_route(route_id: str, step_count: int) -> None:
 
 
 with st.sidebar:
+    pending_lab = st.session_state.pop("sidebar_navigation_target", None)
+    if pending_lab is not None:
+        st.session_state.sidebar_module_navigation = pending_lab
     home_button()
     st.selectbox(
-        "快速模块导航",
-        LAB_LABELS,
-        key="sidebar_module_navigation",
-        on_change=select_sidebar_module,
+        "直接打开实验", list(EXPERIMENT_TARGETS), index=None,
+        placeholder="输入名称查找，或选择实验…",
+        key="quick_experiment", on_change=open_quick_experiment,
     )
-    st.caption("用于直接跳转 7 个领域实验室；进入后可切换具体实验。")
+    current_lab = st.session_state.get("main_navigation", LAB_LABELS[0])
+    current_section = next((
+        st.session_state.get(f"{domain}_navigation", sections[0])
+        for index, (domain, sections) in enumerate(LAB_SECTIONS.items(), start=1)
+        if LAB_LABELS[index] == current_lab
+    ), "")
+    st.caption(f"当前位置：{current_lab}" + (f" / {current_section}" if current_section else ""))
+    with st.expander("按领域浏览", expanded=False):
+        st.selectbox(
+            "快速模块导航",
+            LAB_LABELS,
+            key="sidebar_module_navigation",
+            on_change=select_sidebar_module,
+        )
+        st.caption("用于直接跳转 7 个领域实验室；进入后可切换具体实验。")
     st.divider()
-    st.header("公共光学与测量参数")
     public_defaults = {
         "global_temperature": 0.0,
         "global_noise": 0.0,
@@ -386,25 +458,29 @@ with st.sidebar:
     }
     for key, value in public_defaults.items():
         st.session_state.setdefault(key, value)
-    temperature = st.slider("温度变化 ΔT (°C)", -20.0, 50.0, step=0.5, key="global_temperature")
-    noise = st.slider("波长测量噪声 σ (nm)", 0.0, 0.020, step=0.0005, format="%.4f", key="global_noise")
-    drift = st.slider("零点漂移 (nm)", 0.0, 0.020, step=0.0005, format="%.4f", key="global_drift")
-    sample_rate = st.select_slider("采样率 (Hz)", options=[10, 25, 50, 100, 200], key="global_sample_rate")
-    failed = st.selectbox("模拟失效通道", ["无", "手部 FBG 1", "手部 FBG 2", "手部 FBG 3", "足底区域 1"], key="global_failed_channel")
-    sole_assembly_case = st.selectbox(
-        "可更换足底复装工况（教学设置）",
-        ["正常装配", "压入不足", "单侧错位"],
-        key="sole_assembly_case",
-    )
-    seed = st.number_input("随机种子", min_value=0, max_value=2**32 - 1, step=1, key="global_seed")
-    def apply_demo_preset() -> None:
-        for key, value in public_defaults.items():
-            st.session_state[key] = value
-    st.button("演示预设（恢复公共参数）", key="demo_preset", on_click=apply_demo_preset)
-    st.caption("仅恢复上方公共参数；不重置各页局部参数、手部姿态或任务进度。")
-    st.checkbox("平滑过渡动画（2D/3D 手）", value=True, key="smooth_animation")
+    with st.container(border=True):
+        st.markdown("### 公共测量条件")
+        st.caption("第一次先保持默认值。随后只改温度或噪声，观察哪些实验结果受影响。")
+        temperature = st.slider("温度变化 ΔT (°C)", -20.0, 50.0, step=0.5, key="global_temperature", help="相对参考温度的变化；非零温差可用于比较温补前后的误差。")
+        noise = st.slider("波长测量噪声 σ (nm)", 0.0, 0.020, step=0.0005, format="%.4f", key="global_noise", help="模拟读数抖动，值越大通常越不稳定；0 表示关闭这项测量噪声。")
+        drift = st.slider("零点漂移 (nm)", 0.0, 0.020, step=0.0005, format="%.4f", key="global_drift")
+        sample_rate = st.select_slider("采样率 (Hz)", options=[10, 25, 50, 100, 200], key="global_sample_rate")
+        failed = st.selectbox("模拟失效通道", ["无", "手部 FBG 1", "手部 FBG 2", "手部 FBG 3", "足底区域 1"], key="global_failed_channel")
+        sole_assembly_case = st.selectbox(
+            "可更换足底复装工况（教学设置）",
+            ["正常装配", "压入不足", "单侧错位"],
+            key="sole_assembly_case",
+        )
+        seed = st.number_input("随机种子", min_value=0, max_value=2**32 - 1, step=1, key="global_seed")
+        def apply_demo_preset() -> None:
+            for key, value in public_defaults.items():
+                st.session_state[key] = value
+        st.button("演示预设（恢复公共参数）", key="demo_preset", on_click=apply_demo_preset)
+        st.caption("仅恢复上方公共参数；不重置各页局部参数、手部姿态或任务进度。")
+        st.checkbox("平滑过渡动画（2D/3D 手）", value=True, key="smooth_animation")
     st.divider()
-    st.info("FBG 模型：Δλᵦ = λᵦ[(1−pₑ)ε + kₜΔT]。所有页面均显示真实量与反演量。")
+    st.caption(f"当前公共条件：ΔT {temperature:g} °C · 噪声 {noise:.4f} nm · {sample_rate} Hz · 失效：{failed}")
+    st.caption("参数修改后自动计算；场景预设可能同时改变公共条件。")
 
 overview_tab, foundation_lab, hand_lab, foot_lab, structure_lab, optics_lab, eskin_lab = tracked_tabs(
     LAB_LABELS, "main_navigation"
@@ -431,6 +507,27 @@ with optics_lab:
     )
 
 with overview_tab:
+    with st.container(border=True):
+        st.subheader("第一次使用，从这里开始")
+        st.write("这是可直接操作的教学实验室，不需要上传数据。先做一次基础标定，再按兴趣进入其他实验。")
+        st.markdown("**① 选实验 → ② 按页面提示改一个参数 → ③ 比较真实量与反演量 → ④ 下载记录**")
+        st.button("开始第一个实验：弯曲标定", key="start_first_experiment", type="primary",
+                  on_click=select_main_tab, args=EXPERIMENT_TARGETS["弯曲标定与诊断"])
+        st.caption("只打开实验，不重置已有数据。真实量是仿真设置的输入，反演量是从传感读数估算的结果；两者的差异就是需要观察的误差。")
+        st.markdown("想系统学习？[查看下方六条学习路线 ↓](#learning-routes)。手机上可点左上角箭头打开侧栏。")
+    st.subheader("选择要做的实验")
+    st.caption("点击实验名称直接开始；默认参数可运行，修改后自动更新结果。左侧也可输入名称快速切换。")
+    # 模块目录：直接展示实验入口。
+    module_directory([
+        ("领域实验室", [
+            (1, "FBG 基础与解调", "标定、温补、冗余诊断、接触反演与控制报告"),
+            (2, "手部抓取与触觉", "二维与三维抓取、六路接触感知和材质识别"),
+            (3, "足底感知与装配", "六区载荷、CoP、通道失效和空载复装筛查"),
+            (4, "形状与结构监测", "多芯连续体重建和点式阵列异常定位"),
+            (5, "分布式光学与数据", "分布式、偏振与干涉观测及八列数据兼容"),
+            (6, "电子皮肤与多模态感知", "三轴触觉、光学皮肤、压力重建和动态滑移判别"),
+        ]),
+    ])
     with st.container(border=True):
         showcase_intro, showcase_start = st.columns([4, 1.25])
         with showcase_intro:
@@ -518,452 +615,453 @@ with overview_tab:
                 tab_jump_button(lab_index, "进入完整实验", section_key, section_label)
 
     st.divider()
-    st.subheader("引导式实验路线")
-    st.caption("六条路线覆盖 6 个专业领域内的全部实验。先选目标，再按步骤进入对应子实验；路线只记录学习进度，不修改实验参数、姿态或任务状态。")
-    st.session_state.guided_route_progress = normalise_guided_progress(
-        st.session_state.get("guided_route_progress")
-    )
-    guided_route_name = st.selectbox(
-        "选择实验路线", list(GUIDED_ROUTES), key="guided_route"
-    )
-    guided_route = GUIDED_ROUTES[guided_route_name]
-    guided_steps = guided_route["steps"]
-    route_progress = st.session_state.guided_route_progress[guided_route["id"]]
-    completed_steps = sum(route_progress)
-    covered_modules = list(dict.fromkeys(LAB_LABELS[step[0]] for step in guided_steps))
-    route_summary, route_reset = st.columns([3.5, 1.5])
-    with route_summary:
-        st.markdown(f"**学习目标：** {guided_route['goal']}")
-        st.markdown(f"**最终产物：** {guided_route['deliverable']}")
-        st.caption(f"预计时间：{guided_route['duration']} · 前置建议：{guided_route['prerequisite']}")
-        st.caption("覆盖模块：" + " → ".join(covered_modules))
-    with route_reset:
-        st.button(
-            "重置本路线进度",
-            key="reset_guided_route",
-            on_click=reset_guided_route,
-            args=(guided_route["id"], len(guided_steps)),
-            width="stretch",
+    with st.container(border=True):
+        st.subheader("引导式实验路线", anchor="learning-routes")
+        st.caption("六条路线覆盖 6 个专业领域内的全部实验。先选目标，再按步骤进入对应子实验；路线只记录学习进度，不修改实验参数、姿态或任务状态。")
+        st.session_state.guided_route_progress = normalise_guided_progress(
+            st.session_state.get("guided_route_progress")
         )
-        st.download_button(
-            "下载当前路线学习记录",
-            guided_route_report(guided_route_name, guided_route, route_progress),
-            f"guided_route_{guided_route['id']}.txt",
-            "text/plain",
-            width="stretch",
+        guided_route_name = st.selectbox(
+            "选择实验路线", list(GUIDED_ROUTES), key="guided_route"
         )
-    st.progress(completed_steps / len(guided_steps))
-    st.caption(f"进度 {completed_steps} / {len(guided_steps)}。完成勾选仅记录学习进度，不代表模型结果正确或真实系统验证通过。")
-    for step_index, (lab_index, section_key, section_label, title, action, observation) in enumerate(guided_steps):
-        with st.container(border=True):
-            step_text, step_action = st.columns([4, 1])
-            with step_text:
-                st.markdown(f"**第 {step_index + 1} 步 · {title}**")
-                st.write(action)
-                st.caption(f"预期观察：{observation}")
-                progress_key = f"guided_progress_{guided_route['id']}_{step_index}"
-                st.session_state.setdefault(
-                    progress_key,
-                    st.session_state.guided_route_progress[guided_route["id"]][step_index],
-                )
-                st.checkbox(
-                    "我已完成并记录观察",
-                    key=progress_key,
-                    on_change=update_guided_progress,
-                    args=(guided_route["id"], step_index, progress_key),
-                )
-            with step_action:
-                tab_jump_button(lab_index, f"进入第 {step_index + 1} 步", section_key, section_label)
-    st.divider()
-    st.subheader("模块目录")
-    module_directory([
-        ("领域实验室", [
-            (1, "FBG 基础与解调", "标定、温补、冗余诊断、接触反演与控制报告"),
-            (2, "手部抓取与触觉", "二维与三维抓取、六路接触感知和材质识别"),
-            (3, "足底感知与装配", "六区载荷、CoP、通道失效和空载复装筛查"),
-            (4, "形状与结构监测", "多芯连续体重建和点式阵列异常定位"),
-            (5, "分布式光学与数据", "分布式、偏振与干涉观测及八列数据兼容"),
-            (6, "电子皮肤与多模态感知", "三轴触觉、光学皮肤、压力重建和动态滑移判别"),
-        ]),
-    ])
-    st.subheader("系统架构示意")
-    embedded_view.render_html(visuals.sensing_chain_svg(), key="sensing-chain", height=220, title="系统感知链")
-    st.subheader("当前测量配置")
-    config_a, config_b, config_c, config_d, config_e, config_f = st.columns(6)
-    config_a.metric("温度变化", f"{temperature:.1f} °C")
-    config_b.metric("采样率", f"{sample_rate} Hz")
-    config_c.metric("波长噪声", f"{noise:.4f} nm")
-    config_d.metric("随机种子", f"{int(seed)}")
-    config_e.metric("模拟失效通道", failed)
-    config_f.metric("复装工况", sole_assembly_case)
-    st.subheader("感知链与模块职责")
-    st.markdown(
-        "| 环节 | 当前模块 | 输入 | 输出 |\n"
-        "|---|---|---|---|\n"
-        "| 机械交互 | 二维/三维抓取、多材质触觉、足底 | 姿态、接触、载荷 | FBG 接触与应变读数 |\n"
-        "| 光纤解调 | FBG 标定与诊断、解调器链路 | 原始波长、温度、噪声 | 温补波长、异常通道 |\n"
-        "| 状态估计 | 足底、连续体形状、机械臂健康 | 多路 FBG | CoP、曲率、异常位置 |\n"
-        "| 分布式与偏振 | 分布式感知、偏振与干涉 | 空间/时间观测量 | 应变、振动、温度、偏振态 |\n"
-        "| 控制与任务 | 解调器与实验任务 | 估计状态 | 张开/闭合命令、实验报告 |\n"
-        "| 辅助与兼容 | 装配校验、FBG-SimPlus 兼容 | 结构/文件输入 | 装配预测、标准化八列文本 |\n"
-        "| 电子皮肤 | 三轴单元、光学皮肤、压力重建、动态判别 | 多轴力、压力场、时间序列 | 力分量、质心、重建误差、滑移风险 |"
-    )
-    st.caption("感知链各环节对应上方目录卡片，可点击卡片直接跳转到对应页面。")
-    st.subheader("推荐实验路径")
-    st.markdown(
-        "1. **基础标定与解调**：理解波长、温补、故障诊断和解调输出。\n"
-        "2. **抓取与触觉**：从二维接触推进到三维抓稳与材质模式。\n"
-        "3. **足底与装配**：区分使用载荷感知和空载装配筛查。\n"
-        "4. **形状与结构健康**：比较多芯重建、点式阵列与分布式测量。\n"
-        "5. **光学机制与数据兼容**：比较分布式、偏振和干涉观测量，并完成八列数据预检。\n"
-        "6. **电子皮肤与多模态**：从三轴单元推进到压力场和动态滑移判别。"
-    )
-    st.info("所有页面均为可解释的教学解析模型。它们适合比较传感规律与算法流程，但真实系统仍须使用封装、温度场、动态载荷和设备标定数据进行验证。")
+        guided_route = GUIDED_ROUTES[guided_route_name]
+        guided_steps = guided_route["steps"]
+        route_progress = st.session_state.guided_route_progress[guided_route["id"]]
+        completed_steps = sum(route_progress)
+        covered_modules = list(dict.fromkeys(LAB_LABELS[step[0]] for step in guided_steps))
+        route_summary, route_reset = st.columns([3.5, 1.5])
+        with route_summary:
+            st.markdown(f"**学习目标：** {guided_route['goal']}")
+            st.markdown(f"**最终产物：** {guided_route['deliverable']}")
+            st.caption(f"预计时间：{guided_route['duration']} · 前置建议：{guided_route['prerequisite']}")
+            st.caption("覆盖模块：" + " → ".join(covered_modules))
+        with route_reset:
+            st.button(
+                "重置本路线进度",
+                key="reset_guided_route",
+                on_click=reset_guided_route,
+                args=(guided_route["id"], len(guided_steps)),
+                width="stretch",
+            )
+            st.download_button(
+                "下载当前路线学习记录",
+                guided_route_report(guided_route_name, guided_route, route_progress),
+                f"guided_route_{guided_route['id']}.txt",
+                "text/plain",
+                width="stretch",
+            )
+        st.progress(completed_steps / len(guided_steps))
+        st.caption(f"进度 {completed_steps} / {len(guided_steps)}。完成勾选仅记录学习进度，不代表模型结果正确或真实系统验证通过。")
+        for step_index, (lab_index, section_key, section_label, title, action, observation) in enumerate(guided_steps):
+            with st.container(border=True):
+                step_text, step_action = st.columns([4, 1])
+                with step_text:
+                    st.markdown(f"**第 {step_index + 1} 步 · {title}**")
+                    st.write(action)
+                    st.caption(f"预期观察：{observation}")
+                    progress_key = f"guided_progress_{guided_route['id']}_{step_index}"
+                    st.session_state.setdefault(
+                        progress_key,
+                        st.session_state.guided_route_progress[guided_route["id"]][step_index],
+                    )
+                    st.checkbox(
+                        "我已完成并记录观察",
+                        key=progress_key,
+                        on_change=update_guided_progress,
+                        args=(guided_route["id"], step_index, progress_key),
+                    )
+                with step_action:
+                    tab_jump_button(lab_index, f"进入第 {step_index + 1} 步", section_key, section_label)
+        st.divider()
+    with st.expander("系统原理、配置与使用边界", expanded=False):
+        st.subheader("系统架构示意")
+        embedded_view.render_html(visuals.sensing_chain_svg(), key="sensing-chain", height=220, title="系统感知链")
+        st.subheader("当前测量配置")
+        config_a, config_b, config_c, config_d, config_e, config_f = st.columns(6)
+        config_a.metric("温度变化", f"{temperature:.1f} °C")
+        config_b.metric("采样率", f"{sample_rate} Hz")
+        config_c.metric("波长噪声", f"{noise:.4f} nm")
+        config_d.metric("随机种子", f"{int(seed)}")
+        config_e.metric("模拟失效通道", failed)
+        config_f.metric("复装工况", sole_assembly_case)
+        st.subheader("感知链与模块职责")
+        st.markdown(
+            "| 环节 | 当前模块 | 输入 | 输出 |\n"
+            "|---|---|---|---|\n"
+            "| 机械交互 | 二维/三维抓取、多材质触觉、足底 | 姿态、接触、载荷 | FBG 接触与应变读数 |\n"
+            "| 光纤解调 | FBG 标定与诊断、解调器链路 | 原始波长、温度、噪声 | 温补波长、异常通道 |\n"
+            "| 状态估计 | 足底、连续体形状、机械臂健康 | 多路 FBG | CoP、曲率、异常位置 |\n"
+            "| 分布式与偏振 | 分布式感知、偏振与干涉 | 空间/时间观测量 | 应变、振动、温度、偏振态 |\n"
+            "| 控制与任务 | 解调器与实验任务 | 估计状态 | 张开/闭合命令、实验报告 |\n"
+            "| 辅助与兼容 | 装配校验、FBG-SimPlus 兼容 | 结构/文件输入 | 装配预测、标准化八列文本 |\n"
+            "| 电子皮肤 | 三轴单元、光学皮肤、压力重建、动态判别 | 多轴力、压力场、时间序列 | 力分量、质心、重建误差、滑移风险 |"
+        )
+        st.caption("感知链各环节对应上方目录卡片，可点击卡片直接跳转到对应页面。")
+        st.subheader("推荐实验路径")
+        st.markdown(
+            "1. **基础标定与解调**：理解波长、温补、故障诊断和解调输出。\n"
+            "2. **抓取与触觉**：从二维接触推进到三维抓稳与材质模式。\n"
+            "3. **足底与装配**：区分使用载荷感知和空载装配筛查。\n"
+            "4. **形状与结构健康**：比较多芯重建、点式阵列与分布式测量。\n"
+            "5. **光学机制与数据兼容**：比较分布式、偏振和干涉观测量，并完成八列数据预检。\n"
+            "6. **电子皮肤与多模态**：从三轴单元推进到压力场和动态滑移判别。"
+        )
+        st.info("所有页面均为可解释的教学解析模型。它们适合比较传感规律与算法流程，但真实系统仍须使用封装、温度场、动态载荷和设备标定数据进行验证。")
 
 with hand_tab:
-    st.subheader("机器人手：FBG 弯曲、指尖触觉与关节状态")
-    module_learning_frame(
-        "理解五指屈曲、接触力与六路 FBG 读数如何共同形成二维抓取判定。",
-        "先用‘抓取’预设建立接触，再改变目标位置或侧栏噪声，比较单次结果与重复采样统计。",
-        "同时检查抓稳率、判定一致率、翻转次数和不同传感器布置的通道覆盖。",
-        "二维判定要求拇指与至少两根其余手指达到阈值；掌心通道提供接触背景，但不参与当前二维抓稳规则。",
-    )
-    action_order = ("抬臂", "伸手", "抓取", "按压", "松开", "复位")
-    action_poses = {
-        "抬臂": ((72.0, -50.0, -12.0), (6.0, 8.0, 8.0, 8.0, 8.0)),
-        "伸手": ((18.0, 2.0, 0.0), (3.0, 4.0, 4.0, 4.0, 4.0)),
-        "抓取": ((38.0, -58.0, 18.0), (63.0, 84.0, 84.0, 84.0, 84.0)),
-        "按压": ((20.0, -68.0, -18.0), (46.0, 62.0, 88.0, 62.0, 62.0)),
-        "松开": ((32.0, -35.0, 10.0), (14.0, 18.0, 18.0, 18.0, 18.0)),
-        "复位": ((45.0, -60.0, 15.0), (9.0, 12.0, 12.0, 12.0, 12.0)),
-    }
-    if "arm_action" not in st.session_state:
-        st.session_state.arm_action = "伸手"
-    if "can_world_center" not in st.session_state:
-        st.session_state.can_world_center = np.asarray(models.dexterous_hand_pose("抓取")["target"])
-        st.session_state.can_grasped = False
-        st.session_state.can_relative_to_palm = np.zeros(2)
-    if "can_position_x" not in st.session_state:
-        st.session_state.can_position_x = float(st.session_state.can_world_center[0])
-        st.session_state.can_position_y = float(st.session_state.can_world_center[1])
-    for key in ("shoulder_translation_x", "shoulder_translation_z"):
-        st.session_state.setdefault(key, 0.0)
-    if "two_d_task_phase" not in st.session_state:
-        st.session_state.two_d_task_phase = "未启动"
-
-    def apply_action_pose(action_name: str) -> None:
-        st.session_state.arm_action = action_name
-        arm_angles, finger_curls = action_poses[action_name]
-        for key, value in zip(("manual_shoulder", "manual_elbow", "manual_wrist"), arm_angles):
-            st.session_state[key] = value
-        for key, value in zip(("manual_thumb", "manual_index", "manual_middle", "manual_ring", "manual_little"), finger_curls):
-            st.session_state[key] = value
-
-    def begin_two_d_grasp_task() -> None:
-        remember_two_d_render_state()
-        apply_action_pose("伸手")
+    @st.fragment
+    def render_planar_grasp():
+        st.subheader("机器人手：FBG 弯曲、指尖触觉与关节状态")
+        experiment_shortcuts("planar")
+        module_learning_frame(
+            '理解五指屈曲、接触力与六路 FBG 读数如何共同形成二维抓取判定。',
+            '点击“开始二维寻找与抓取任务”，再按“执行下一步”推进；观察手与目标的相对位置。',
+            '同时检查抓稳率、判定一致率、翻转次数和不同传感器布置的通道覆盖。',
+            '二维判定要求拇指与至少两根其余手指达到阈值；掌心通道提供接触背景，但不参与当前二维抓稳规则。',
+            has_baseline=False,
+        )
+        action_order = ("抬臂", "伸手", "抓取", "按压", "松开", "复位")
+        action_poses = {
+            "抬臂": ((72.0, -50.0, -12.0), (6.0, 8.0, 8.0, 8.0, 8.0)),
+            "伸手": ((18.0, 2.0, 0.0), (3.0, 4.0, 4.0, 4.0, 4.0)),
+            "抓取": ((38.0, -58.0, 18.0), (63.0, 84.0, 84.0, 84.0, 84.0)),
+            "按压": ((20.0, -68.0, -18.0), (46.0, 62.0, 88.0, 62.0, 62.0)),
+            "松开": ((32.0, -35.0, 10.0), (14.0, 18.0, 18.0, 18.0, 18.0)),
+            "复位": ((45.0, -60.0, 15.0), (9.0, 12.0, 12.0, 12.0, 12.0)),
+        }
+        if "arm_action" not in st.session_state:
+            st.session_state.arm_action = "伸手"
+        if "can_world_center" not in st.session_state:
+            st.session_state.can_world_center = np.asarray(models.dexterous_hand_pose("抓取")["target"])
+            st.session_state.can_grasped = False
+            st.session_state.can_relative_to_palm = np.zeros(2)
+        if "can_position_x" not in st.session_state:
+            st.session_state.can_position_x = float(st.session_state.can_world_center[0])
+            st.session_state.can_position_y = float(st.session_state.can_world_center[1])
         for key in ("shoulder_translation_x", "shoulder_translation_z"):
-            st.session_state[key] = 0.0
-        st.session_state.two_d_task_phase = "寻找目标"
+            st.session_state.setdefault(key, 0.0)
+        if "two_d_task_phase" not in st.session_state:
+            st.session_state.two_d_task_phase = "未启动"
 
-    def align_hand_to_two_d_target() -> None:
-        """Move the hand's reach frame to the fixed world-space can position."""
-        alignment_angles = action_poses["抓取"][0]
-        alignment_curls = (20.0, 20.0, 20.0, 20.0, 20.0)
-        st.session_state.arm_action = "伸手"
-        for key, value in zip(("manual_shoulder", "manual_elbow", "manual_wrist"), alignment_angles):
-            st.session_state[key] = value
-        for key, value in zip(("manual_thumb", "manual_index", "manual_middle", "manual_ring", "manual_little"), alignment_curls):
-            st.session_state[key] = value
-        base_pose = models.dexterous_hand_pose("抓取", alignment_angles, alignment_curls)
-        target = np.asarray(base_pose["target"])
-        can_world = np.asarray(st.session_state.can_world_center)
-        st.session_state.shoulder_translation_x = float(can_world[0] - target[0])
-        st.session_state.shoulder_translation_z = float(can_world[1] - target[1])
+        def apply_action_pose(action_name: str) -> None:
+            st.session_state.arm_action = action_name
+            arm_angles, finger_curls = action_poses[action_name]
+            for key, value in zip(("manual_shoulder", "manual_elbow", "manual_wrist"), arm_angles):
+                st.session_state[key] = value
+            for key, value in zip(("manual_thumb", "manual_index", "manual_middle", "manual_ring", "manual_little"), finger_curls):
+                st.session_state[key] = value
 
-    def current_two_d_grasp_is_verified() -> tuple[bool, dict, np.ndarray]:
-        """Read the closed pose and resolve FBG grasp state before controls lock."""
-        joint_angles = tuple(st.session_state[key] for key in ("manual_shoulder", "manual_elbow", "manual_wrist"))
-        finger_curls = tuple(st.session_state[key] for key in ("manual_thumb", "manual_index", "manual_middle", "manual_ring", "manual_little"))
-        pose = models.dexterous_hand_pose(
-            st.session_state.arm_action,
-            joint_angles,
-            finger_curls,
-            0.0,
-            (st.session_state.shoulder_translation_x, st.session_state.shoulder_translation_z),
-        )
-        can_center = np.asarray(st.session_state.can_world_center, dtype=float)
-        grasp = models.evaluate_can_grasp(pose, can_center)
-        sensing = models.simulate_planar_grasp_fbg(
-            finger_curls,
-            grasp["contact_force_n"],
-            temperature,
-        )
-        decision = models.classify_planar_grasp_from_fbg(sensing, finger_curls, temperature)
-        return bool(decision["is_grasped"]), pose, can_center
+        def begin_two_d_grasp_task() -> None:
+            remember_two_d_render_state()
+            apply_action_pose("伸手")
+            for key in ("shoulder_translation_x", "shoulder_translation_z"):
+                st.session_state[key] = 0.0
+            st.session_state.two_d_task_phase = "寻找目标"
 
-    def remember_two_d_render_state() -> None:
-        """Keep the last complete scene so the next task command can animate from it."""
-        st.session_state.two_d_previous_pose = models.dexterous_hand_pose(
-            st.session_state.arm_action,
-            tuple(st.session_state[key] for key in ("manual_shoulder", "manual_elbow", "manual_wrist")),
-            tuple(st.session_state[key] for key in ("manual_thumb", "manual_index", "manual_middle", "manual_ring", "manual_little")),
-            0.0,
-            (st.session_state.shoulder_translation_x, st.session_state.shoulder_translation_z),
-        )
-        st.session_state.two_d_previous_can_center = np.asarray(st.session_state.can_world_center, dtype=float)
-        st.session_state.two_d_previous_grasped = bool(st.session_state.can_grasped)
+        def align_hand_to_two_d_target() -> None:
+            """Move the hand's reach frame to the fixed world-space can position."""
+            alignment_angles = action_poses["抓取"][0]
+            alignment_curls = (20.0, 20.0, 20.0, 20.0, 20.0)
+            st.session_state.arm_action = "伸手"
+            for key, value in zip(("manual_shoulder", "manual_elbow", "manual_wrist"), alignment_angles):
+                st.session_state[key] = value
+            for key, value in zip(("manual_thumb", "manual_index", "manual_middle", "manual_ring", "manual_little"), alignment_curls):
+                st.session_state[key] = value
+            base_pose = models.dexterous_hand_pose("抓取", alignment_angles, alignment_curls)
+            target = np.asarray(base_pose["target"])
+            can_world = np.asarray(st.session_state.can_world_center)
+            st.session_state.shoulder_translation_x = float(can_world[0] - target[0])
+            st.session_state.shoulder_translation_z = float(can_world[1] - target[1])
 
-    def apply_two_d_transport_pose() -> None:
-        """Lift the arm while maintaining the verified closed-finger grasp."""
-        st.session_state.arm_action = "抬臂"
-        for key, value in zip(("manual_shoulder", "manual_elbow", "manual_wrist"), (55.0, -35.0, 15.0)):
-            st.session_state[key] = value
+        def current_two_d_grasp_is_verified() -> tuple[bool, dict, np.ndarray]:
+            """Read the closed pose and resolve FBG grasp state before controls lock."""
+            joint_angles = tuple(st.session_state[key] for key in ("manual_shoulder", "manual_elbow", "manual_wrist"))
+            finger_curls = tuple(st.session_state[key] for key in ("manual_thumb", "manual_index", "manual_middle", "manual_ring", "manual_little"))
+            pose = models.dexterous_hand_pose(
+                st.session_state.arm_action,
+                joint_angles,
+                finger_curls,
+                0.0,
+                (st.session_state.shoulder_translation_x, st.session_state.shoulder_translation_z),
+            )
+            can_center = np.asarray(st.session_state.can_world_center, dtype=float)
+            grasp = models.evaluate_can_grasp(pose, can_center)
+            sensing = models.simulate_planar_grasp_fbg(
+                finger_curls,
+                grasp["contact_force_n"],
+                temperature,
+            )
+            decision = models.classify_planar_grasp_from_fbg(sensing, finger_curls, temperature)
+            return bool(decision["is_grasped"]), pose, can_center
 
-    def advance_two_d_grasp_task() -> None:
-        phase = st.session_state.two_d_task_phase
-        remember_two_d_render_state()
-        if phase == "抓取失败":
-            st.session_state.two_d_task_phase = "对准目标"
-            return
-        if phase == "寻找目标":
-            st.session_state.two_d_found_target = np.asarray(st.session_state.can_world_center, dtype=float)
-            st.session_state.two_d_task_phase = models.next_grasp_task_phase(phase, False)
-            return
-        if phase == "对准目标":
-            align_hand_to_two_d_target()
-            st.session_state.two_d_task_phase = models.next_grasp_task_phase(phase, False)
-            return
-        if phase == "闭合抓取":
-            apply_action_pose("抓取")
-            verified, pose, can_center = current_two_d_grasp_is_verified()
-            if verified:
-                st.session_state.can_grasped = True
-                st.session_state.can_relative_to_palm = can_center - np.asarray(pose["palm_center"])
-                apply_two_d_transport_pose()
-                st.session_state.two_d_task_phase = models.next_grasp_task_phase("闭合抓取", True)
-            else:
-                st.session_state.two_d_task_phase = models.next_grasp_task_phase("闭合抓取", False)
-            return
-        if phase == "搬运目标":
-            transport_pose = models.dexterous_hand_pose(
+        def remember_two_d_render_state() -> None:
+            """Keep the last complete scene so the next task command can animate from it."""
+            st.session_state.two_d_previous_pose = models.dexterous_hand_pose(
                 st.session_state.arm_action,
                 tuple(st.session_state[key] for key in ("manual_shoulder", "manual_elbow", "manual_wrist")),
                 tuple(st.session_state[key] for key in ("manual_thumb", "manual_index", "manual_middle", "manual_ring", "manual_little")),
                 0.0,
                 (st.session_state.shoulder_translation_x, st.session_state.shoulder_translation_z),
             )
-            released_center = np.asarray(transport_pose["palm_center"]) + st.session_state.can_relative_to_palm
-            st.session_state.can_world_center = released_center
+            st.session_state.two_d_previous_can_center = np.asarray(st.session_state.can_world_center, dtype=float)
+            st.session_state.two_d_previous_grasped = bool(st.session_state.can_grasped)
+
+        def apply_two_d_transport_pose() -> None:
+            """Lift the arm while maintaining the verified closed-finger grasp."""
+            st.session_state.arm_action = "抬臂"
+            for key, value in zip(("manual_shoulder", "manual_elbow", "manual_wrist"), (55.0, -35.0, 15.0)):
+                st.session_state[key] = value
+
+        def advance_two_d_grasp_task() -> None:
+            phase = st.session_state.two_d_task_phase
+            remember_two_d_render_state()
+            if phase == "抓取失败":
+                st.session_state.two_d_task_phase = "对准目标"
+                return
+            if phase == "寻找目标":
+                st.session_state.two_d_found_target = np.asarray(st.session_state.can_world_center, dtype=float)
+                st.session_state.two_d_task_phase = models.next_grasp_task_phase(phase, False)
+                return
+            if phase == "对准目标":
+                align_hand_to_two_d_target()
+                st.session_state.two_d_task_phase = models.next_grasp_task_phase(phase, False)
+                return
+            if phase == "闭合抓取":
+                apply_action_pose("抓取")
+                verified, pose, can_center = current_two_d_grasp_is_verified()
+                if verified:
+                    st.session_state.can_grasped = True
+                    st.session_state.can_relative_to_palm = can_center - np.asarray(pose["palm_center"])
+                    apply_two_d_transport_pose()
+                    st.session_state.two_d_task_phase = models.next_grasp_task_phase("闭合抓取", True)
+                else:
+                    st.session_state.two_d_task_phase = models.next_grasp_task_phase("闭合抓取", False)
+                return
+            if phase == "搬运目标":
+                transport_pose = models.dexterous_hand_pose(
+                    st.session_state.arm_action,
+                    tuple(st.session_state[key] for key in ("manual_shoulder", "manual_elbow", "manual_wrist")),
+                    tuple(st.session_state[key] for key in ("manual_thumb", "manual_index", "manual_middle", "manual_ring", "manual_little")),
+                    0.0,
+                    (st.session_state.shoulder_translation_x, st.session_state.shoulder_translation_z),
+                )
+                released_center = np.asarray(transport_pose["palm_center"]) + st.session_state.can_relative_to_palm
+                st.session_state.can_world_center = released_center
+                st.session_state.can_position_x = float(released_center[0])
+                st.session_state.can_position_y = float(released_center[1])
+                apply_action_pose("松开")
+                st.session_state.can_grasped = False
+                st.session_state.two_d_task_phase = models.next_grasp_task_phase("搬运目标", True)
+                return
+            if phase == "松开并放置":
+                st.session_state.two_d_task_phase = models.next_grasp_task_phase(phase, False)
+
+        def release_can() -> None:
+            release_pose = models.dexterous_hand_pose(
+                st.session_state.arm_action,
+                (st.session_state.manual_shoulder, st.session_state.manual_elbow, st.session_state.manual_wrist),
+                (st.session_state.manual_thumb, st.session_state.manual_index, st.session_state.manual_middle, st.session_state.manual_ring, st.session_state.manual_little),
+                0.0,
+                (st.session_state.get("shoulder_translation_x", 0.0), st.session_state.get("shoulder_translation_z", 0.0)),
+            )
+            released_center = np.asarray(release_pose["palm_center"]) + st.session_state.can_relative_to_palm if st.session_state.can_grasped else st.session_state.can_world_center
+            st.session_state.can_world_center = np.asarray(released_center, dtype=float)
             st.session_state.can_position_x = float(released_center[0])
             st.session_state.can_position_y = float(released_center[1])
-            apply_action_pose("松开")
             st.session_state.can_grasped = False
-            st.session_state.two_d_task_phase = models.next_grasp_task_phase("搬运目标", True)
-            return
-        if phase == "松开并放置":
-            st.session_state.two_d_task_phase = models.next_grasp_task_phase(phase, False)
 
-    def release_can() -> None:
-        release_pose = models.dexterous_hand_pose(
-            st.session_state.arm_action,
-            (st.session_state.manual_shoulder, st.session_state.manual_elbow, st.session_state.manual_wrist),
-            (st.session_state.manual_thumb, st.session_state.manual_index, st.session_state.manual_middle, st.session_state.manual_ring, st.session_state.manual_little),
-            0.0,
-            (st.session_state.get("shoulder_translation_x", 0.0), st.session_state.get("shoulder_translation_z", 0.0)),
-        )
-        released_center = np.asarray(release_pose["palm_center"]) + st.session_state.can_relative_to_palm if st.session_state.can_grasped else st.session_state.can_world_center
-        st.session_state.can_world_center = np.asarray(released_center, dtype=float)
-        st.session_state.can_position_x = float(released_center[0])
-        st.session_state.can_position_y = float(released_center[1])
-        st.session_state.can_grasped = False
+        action = st.session_state.arm_action
+        two_d_controls_unlocked = st.session_state.two_d_task_phase in ("未启动", "松开并放置", "完成")
+        planar_controls, planar_display = st.columns([1, 2])
+        with planar_controls:
+            st.markdown("#### 指令")
+            preset_rows = [*st.columns(3), *st.columns(3)]
+            for column, action_name in zip(preset_rows, action_order):
+                if column.button(action_name, key=f"action_{action_name}", disabled=not two_d_controls_unlocked):
+                    apply_action_pose(action_name)
+                    if action_name == "松开":
+                        st.session_state.can_grasped = False
+            task_left, task_right = st.columns(2)
+            task_left.button("开始二维寻找与抓取任务", key="start_two_d_grasp_task", on_click=begin_two_d_grasp_task, disabled=not two_d_controls_unlocked)
+            task_right.button("执行下一步" if st.session_state.two_d_task_phase != "抓取失败" else "重新对准目标", key="advance_two_d_grasp_task", on_click=advance_two_d_grasp_task, disabled=st.session_state.two_d_task_phase in ("未启动", "完成"))
+            if st.session_state.two_d_task_phase != "未启动":
+                st.caption(f"二维任务状态：{st.session_state.two_d_task_phase}。物体世界坐标保持固定，手部向目标移动；抓取仅由 FBG 判定。")
+            with st.container(border=True):
+                st.markdown("#### 姿态与目标")
+                st.caption("可先用上方预设进入姿态，再单独调节每个关节。手指碰到罐体后会产生接触力并反映到 FBG 读数；只有拇指与至少两根手指的接触力都达到阈值才会绑定到掌心。")
 
-    action = st.session_state.arm_action
-    two_d_controls_unlocked = st.session_state.two_d_task_phase in ("未启动", "松开并放置", "完成")
-    planar_controls, planar_display = st.columns([1, 2])
-    with planar_controls:
-        st.markdown("#### 指令")
-        preset_rows = [*st.columns(3), *st.columns(3)]
-        for column, action_name in zip(preset_rows, action_order):
-            if column.button(action_name, key=f"action_{action_name}", disabled=not two_d_controls_unlocked):
-                apply_action_pose(action_name)
-                if action_name == "松开":
-                    st.session_state.can_grasped = False
-        task_left, task_right = st.columns(2)
-        task_left.button("开始二维寻找与抓取任务", key="start_two_d_grasp_task", on_click=begin_two_d_grasp_task, disabled=not two_d_controls_unlocked)
-        task_right.button("执行下一步" if st.session_state.two_d_task_phase != "抓取失败" else "重新对准目标", key="advance_two_d_grasp_task", on_click=advance_two_d_grasp_task, disabled=st.session_state.two_d_task_phase in ("未启动", "完成"))
-        if st.session_state.two_d_task_phase != "未启动":
-            st.caption(f"二维任务状态：{st.session_state.two_d_task_phase}。物体世界坐标保持固定，手部向目标移动；抓取仅由 FBG 判定。")
-        st.markdown("#### 姿态与目标")
-        st.caption("可先用上方预设进入姿态，再单独调节每个关节。手指碰到罐体后会产生接触力并反映到 FBG 读数；只有拇指与至少两根手指的接触力都达到阈值才会绑定到掌心。")
+                def controlled_slider(label: str, minimum: float, maximum: float, initial: float, key: str) -> float:
+                    if key not in st.session_state:
+                        st.session_state[key] = initial
+                    return st.slider(label, minimum, maximum, step=1.0, key=key, disabled=not two_d_controls_unlocked)
 
-        def controlled_slider(label: str, minimum: float, maximum: float, initial: float, key: str) -> float:
-            if key not in st.session_state:
-                st.session_state[key] = initial
-            return st.slider(label, minimum, maximum, step=1.0, key=key, disabled=not two_d_controls_unlocked)
+                arm_a, arm_b, arm_c = st.columns(3)
+                with arm_a:
+                    shoulder = controlled_slider("肩关节 (°)", -20.0, 100.0, action_poses[action][0][0], "manual_shoulder")
+                with arm_b:
+                    elbow = controlled_slider("肘关节 (°)", -100.0, 40.0, action_poses[action][0][1], "manual_elbow")
+                with arm_c:
+                    wrist = controlled_slider("腕关节 (°)", -70.0, 70.0, action_poses[action][0][2], "manual_wrist")
+                finger_a, finger_b = st.columns(2)
+                with finger_a:
+                    thumb = controlled_slider("拇指屈曲 (°)", 0.0, 95.0, action_poses[action][1][0], "manual_thumb")
+                    middle = controlled_slider("中指屈曲 (°)", 0.0, 95.0, action_poses[action][1][2], "manual_middle")
+                    little = controlled_slider("小指屈曲 (°)", 0.0, 95.0, action_poses[action][1][4], "manual_little")
+                with finger_b:
+                    index = controlled_slider("食指屈曲 (°)", 0.0, 95.0, action_poses[action][1][1], "manual_index")
+                    ring = controlled_slider("无名指屈曲 (°)", 0.0, 95.0, action_poses[action][1][3], "manual_ring")
+                st.markdown("#### 物体世界坐标与肩部位移")
+                target_a, target_b = st.columns(2)
+                with target_a:
+                    can_x = st.slider("饮料罐水平位置", -8.0, 10.0, step=0.1, key="can_position_x", disabled=st.session_state.can_grasped or not two_d_controls_unlocked)
+                    st.slider("肩部水平位移", -12.0, 12.0, step=0.1, key="shoulder_translation_x", disabled=not two_d_controls_unlocked)
+                with target_b:
+                    can_y = st.slider("饮料罐垂直位置", -6.0, 8.0, step=0.1, key="can_position_y", disabled=st.session_state.can_grasped or not two_d_controls_unlocked)
+                    st.slider("肩部垂直位移", -12.0, 12.0, step=0.1, key="shoulder_translation_z", disabled=not two_d_controls_unlocked)
+                st.button("放下饮料罐", key="release_can", on_click=release_can, disabled=not two_d_controls_unlocked)
 
-        arm_a, arm_b, arm_c = st.columns(3)
-        with arm_a:
-            shoulder = controlled_slider("肩关节 (°)", -20.0, 100.0, action_poses[action][0][0], "manual_shoulder")
-        with arm_b:
-            elbow = controlled_slider("肘关节 (°)", -100.0, 40.0, action_poses[action][0][1], "manual_elbow")
-        with arm_c:
-            wrist = controlled_slider("腕关节 (°)", -70.0, 70.0, action_poses[action][0][2], "manual_wrist")
-        finger_a, finger_b = st.columns(2)
-        with finger_a:
-            thumb = controlled_slider("拇指屈曲 (°)", 0.0, 95.0, action_poses[action][1][0], "manual_thumb")
-            middle = controlled_slider("中指屈曲 (°)", 0.0, 95.0, action_poses[action][1][2], "manual_middle")
-            little = controlled_slider("小指屈曲 (°)", 0.0, 95.0, action_poses[action][1][4], "manual_little")
-        with finger_b:
-            index = controlled_slider("食指屈曲 (°)", 0.0, 95.0, action_poses[action][1][1], "manual_index")
-            ring = controlled_slider("无名指屈曲 (°)", 0.0, 95.0, action_poses[action][1][3], "manual_ring")
-        st.markdown("#### 物体世界坐标与肩部位移")
-        target_a, target_b = st.columns(2)
-        with target_a:
-            can_x = st.slider("饮料罐水平位置", -8.0, 10.0, step=0.1, key="can_position_x", disabled=st.session_state.can_grasped or not two_d_controls_unlocked)
-            st.slider("肩部水平位移", -12.0, 12.0, step=0.1, key="shoulder_translation_x", disabled=not two_d_controls_unlocked)
-        with target_b:
-            can_y = st.slider("饮料罐垂直位置", -6.0, 8.0, step=0.1, key="can_position_y", disabled=st.session_state.can_grasped or not two_d_controls_unlocked)
-            st.slider("肩部垂直位移", -12.0, 12.0, step=0.1, key="shoulder_translation_z", disabled=not two_d_controls_unlocked)
-        st.button("放下饮料罐", key="release_can", on_click=release_can, disabled=not two_d_controls_unlocked)
-
-    joint_angles = (shoulder, elbow, wrist)
-    finger_curls = (thumb, index, middle, ring, little)
-    planar_translation = (st.session_state.get("shoulder_translation_x", 0.0), st.session_state.get("shoulder_translation_z", 0.0))
-    pose = models.dexterous_hand_pose(action, joint_angles, finger_curls, 0.0, planar_translation)
-    if st.session_state.can_grasped and st.session_state.two_d_task_phase not in ("搬运目标", "松开并放置"):
-        bound_center = np.asarray(pose["palm_center"]) + st.session_state.can_relative_to_palm
-        if not models.evaluate_can_grasp(pose, bound_center)["is_grasped"]:
-            st.session_state.can_grasped = False
-            st.session_state.can_world_center = bound_center
-            st.session_state.can_position_x = float(bound_center[0])
-            st.session_state.can_position_y = float(bound_center[1])
-    if not st.session_state.can_grasped:
-        st.session_state.can_world_center = np.array([can_x, can_y])
-    if st.session_state.can_grasped:
-        can_center = np.asarray(pose["palm_center"]) + st.session_state.can_relative_to_palm
-    else:
-        can_center = np.asarray(st.session_state.can_world_center)
-    grasp = models.evaluate_can_grasp(pose, can_center)
-    planar_fbg = models.simulate_planar_grasp_fbg(
-        finger_curls,
-        grasp["contact_force_n"],
-        temperature,
-    )
-    planar_fbg_decision = models.classify_planar_grasp_from_fbg(planar_fbg, finger_curls, temperature)
-    if planar_fbg_decision["is_grasped"] and not st.session_state.can_grasped:
-        st.session_state.can_grasped = True
-        st.session_state.can_relative_to_palm = can_center - np.asarray(pose["palm_center"])
-    grasp_label = "FBG 已抓稳：饮料罐会跟随掌心移动" if st.session_state.can_grasped else "FBG 未抓稳：请让拇指与至少两根手指形成触觉接触"
-    if st.session_state.can_grasped:
-        display_curls = finger_curls
-    else:
-        display_curls = tuple(float(value) for value in grasp["limited_curls_deg"])
-    display_pose = models.dexterous_hand_pose(action, joint_angles, display_curls, 0.0, planar_translation)
-    previous_pose = st.session_state.get("two_d_previous_pose", display_pose)
-    previous_can_center = np.asarray(st.session_state.get("two_d_previous_can_center", can_center), dtype=float)
-    previous_grasped = bool(st.session_state.get("two_d_previous_grasped", st.session_state.can_grasped))
-    previous_contact_fingers = st.session_state.get("two_d_previous_contact_fingers", list(planar_fbg_decision["contact_fingers"]))
-    with planar_display:
+        joint_angles = (shoulder, elbow, wrist)
+        finger_curls = (thumb, index, middle, ring, little)
+        planar_translation = (st.session_state.get("shoulder_translation_x", 0.0), st.session_state.get("shoulder_translation_z", 0.0))
+        pose = models.dexterous_hand_pose(action, joint_angles, finger_curls, 0.0, planar_translation)
+        if st.session_state.can_grasped and st.session_state.two_d_task_phase not in ("搬运目标", "松开并放置"):
+            bound_center = np.asarray(pose["palm_center"]) + st.session_state.can_relative_to_palm
+            if not models.evaluate_can_grasp(pose, bound_center)["is_grasped"]:
+                st.session_state.can_grasped = False
+                st.session_state.can_world_center = bound_center
+                st.session_state.can_position_x = float(bound_center[0])
+                st.session_state.can_position_y = float(bound_center[1])
+        if not st.session_state.can_grasped:
+            st.session_state.can_world_center = np.array([can_x, can_y])
         if st.session_state.can_grasped:
-            st.success(grasp_label)
+            can_center = np.asarray(pose["palm_center"]) + st.session_state.can_relative_to_palm
         else:
-            st.warning(grasp_label)
-        planar_metrics = st.columns(3)
-        planar_metrics[0].metric("FBG 触觉接触手指", f"{len(planar_fbg_decision['contact_fingers'])} / 5")
-        planar_metrics[1].metric("FBG 反演接触合力", f"{np.asarray(planar_fbg_decision['contact_force_n']).sum():.2f} N")
-        planar_metrics[2].metric("掌心 FBG 接触力", f"{planar_fbg_decision['palm_touch_n']:.2f} N")
-        st.caption("动画自动播放手部从上一状态到当前状态的过渡；手指碰到罐体会停在接触面，接触力随屈曲增大。")
-        embedded_view.render_html(
-            visuals.planar_hand_animation_html(
-                previous_pose,
-                display_pose,
-                previous_can_center,
-                can_center,
-                previous_grasped,
-                st.session_state.can_grasped,
-                previous_contact_fingers,
-                list(planar_fbg_decision["contact_fingers"]),
-                animate=st.session_state.get("smooth_animation", True),
-            ),
-            key="planar-hand", height=620, title="二维抓取视图",
+            can_center = np.asarray(st.session_state.can_world_center)
+        grasp = models.evaluate_can_grasp(pose, can_center)
+        planar_fbg = models.simulate_planar_grasp_fbg(
+            finger_curls,
+            grasp["contact_force_n"],
+            temperature,
         )
-        st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 7), planar_fbg["wavelength_shifts_nm"], "二维抓取：五指与掌心六路 FBG 波长漂移"), width="stretch")
-        st.caption(f"第 6 路为掌心 FBG：{'检测到掌心接触力' if planar_fbg_decision['palm_contact'] else '当前掌心接触力较弱'}。抓稳判定仍保持“拇指＋至少两根其余手指”规则，且需要接触力达到阈值。")
-    finger_names = ["拇指", "食指", "中指", "无名指", "小指"]
-    planar_record = {
-        "dimension": "二维",
-        "task_phase": st.session_state.two_d_task_phase,
-        "is_grasped": bool(planar_fbg_decision["is_grasped"]),
-        "contact_fingers": [finger_names[index] for index in planar_fbg_decision["contact_fingers"]],
-        "contact_force_n": np.asarray(planar_fbg_decision["contact_force_n"], dtype=float).tolist(),
-        "palm_touch_n": float(planar_fbg_decision["palm_touch_n"]),
-        "wavelength_shifts_nm": np.asarray(planar_fbg["wavelength_shifts_nm"], dtype=float).tolist(),
-        "temperature_c": temperature,
-        "noise_nm": noise,
-        "seed": int(seed),
-        "target_position": np.asarray(can_center, dtype=float).tolist(),
-    }
-    planar_download_a, planar_download_b = st.columns(2)
-    planar_download_a.download_button(
-        "下载二维抓取 FBG 读数 CSV",
-        csv_bytes(["拇指 FBG", "食指 FBG", "中指 FBG", "无名指 FBG", "小指 FBG", "掌心 FBG"], np.asarray(planar_fbg["wavelength_shifts_nm"])),
-        "planar_grasp_fbg_readings.csv", "text/csv",
-    )
-    planar_download_b.download_button(
-        "下载二维抓取实验报告", experiments.grasp_report(planar_record).encode("utf-8-sig"),
-        "planar_grasp_report.txt", "text/plain",
-    )
-    st.markdown("#### 重复采样与传感器布置实验")
-    planar_repeat_samples = st.select_slider(
-        "二维重复采样次数", options=[20, 50, 100, 200], value=50, key="planar_repeat_samples"
-    )
-    planar_study = experiments.run_planar_grasp_noise_study(
-        planar_fbg, finger_curls, temperature, noise, int(planar_repeat_samples), (int(seed) + 330) % 2**32
-    )
-    planar_layouts = experiments.compare_grasp_sensor_layouts(
-        planar_study["baseline_contact_force_n"],
-        planar_study["baseline_palm_touch_n"],
-        requires_palm=False,
-    )
-    planar_stats = st.columns(4)
-    planar_stats[0].metric("无噪声基准", "抓稳" if planar_study["baseline_is_grasped"] else "未抓稳")
-    planar_stats[1].metric("重复采样抓稳率", f"{planar_study['grasped_rate_percent']:.1f}%")
-    planar_stats[2].metric("判定一致率", f"{planar_study['decision_consistency_percent']:.1f}%")
-    planar_stats[3].metric("判定翻转", f"{planar_study['decision_flip_count']} 次")
-    st.caption(
-        f"当前 σ={noise:.4f} nm：五指反演合力 {planar_study['total_force_mean_n']:.3f} ± "
-        f"{planar_study['total_force_std_n']:.3f} N；掌心反演力 {planar_study['palm_force_mean_n']:.3f} ± "
-        f"{planar_study['palm_force_std_n']:.3f} N。判定一致率表示重复结果与无噪声当前姿态判定相同的比例。"
-    )
-    st.dataframe(planar_layouts, hide_index=True, width="stretch")
-    st.caption("布置表的受力覆盖率只针对当前姿态，无接触力时记为 0%；‘可完整执行当前判定’表示所列通道能否观察二维规则所需的全部五指。")
-    with st.expander("查看二维逐次采样记录", expanded=False):
-        st.dataframe(planar_study["samples"], hide_index=True, width="stretch")
-    planar_repeat_a, planar_repeat_b = st.columns(2)
-    planar_repeat_a.download_button(
-        "下载二维重复采样 CSV", experiments.grasp_noise_study_csv(planar_study),
-        "planar_grasp_repeatability.csv", "text/csv",
-    )
-    planar_repeat_b.download_button(
-        "下载二维抓取稳健性报告",
-        experiments.grasp_robustness_report("二维", planar_study, planar_layouts).encode("utf-8-sig"),
-        "planar_grasp_robustness_report.txt", "text/plain",
-    )
-    st.session_state.two_d_previous_pose = display_pose
-    st.session_state.two_d_previous_can_center = np.asarray(can_center, dtype=float)
-    st.session_state.two_d_previous_grasped = bool(st.session_state.can_grasped)
-    st.session_state.two_d_previous_contact_fingers = list(planar_fbg_decision["contact_fingers"])
+        planar_fbg_decision = models.classify_planar_grasp_from_fbg(planar_fbg, finger_curls, temperature)
+        if planar_fbg_decision["is_grasped"] and not st.session_state.can_grasped:
+            st.session_state.can_grasped = True
+            st.session_state.can_relative_to_palm = can_center - np.asarray(pose["palm_center"])
+        grasp_label = "FBG 已抓稳：饮料罐会跟随掌心移动" if st.session_state.can_grasped else "FBG 未抓稳：请让拇指与至少两根手指形成触觉接触"
+        if st.session_state.can_grasped:
+            display_curls = finger_curls
+        else:
+            display_curls = tuple(float(value) for value in grasp["limited_curls_deg"])
+        display_pose = models.dexterous_hand_pose(action, joint_angles, display_curls, 0.0, planar_translation)
+        previous_pose = st.session_state.get("two_d_previous_pose", display_pose)
+        previous_can_center = np.asarray(st.session_state.get("two_d_previous_can_center", can_center), dtype=float)
+        previous_grasped = bool(st.session_state.get("two_d_previous_grasped", st.session_state.can_grasped))
+        previous_contact_fingers = st.session_state.get("two_d_previous_contact_fingers", list(planar_fbg_decision["contact_fingers"]))
+        with planar_display:
+            if st.session_state.can_grasped:
+                st.success(grasp_label)
+            else:
+                st.warning(grasp_label)
+            planar_metrics = st.columns(3)
+            planar_metrics[0].metric("FBG 触觉接触手指", f"{len(planar_fbg_decision['contact_fingers'])} / 5")
+            planar_metrics[1].metric("FBG 反演接触合力", f"{np.asarray(planar_fbg_decision['contact_force_n']).sum():.2f} N")
+            planar_metrics[2].metric("掌心 FBG 接触力", f"{planar_fbg_decision['palm_touch_n']:.2f} N")
+            st.caption("动画自动播放手部从上一状态到当前状态的过渡；手指碰到罐体会停在接触面，接触力随屈曲增大。")
+            embedded_view.render_html(
+                visuals.planar_hand_animation_html(
+                    previous_pose,
+                    display_pose,
+                    previous_can_center,
+                    can_center,
+                    previous_grasped,
+                    st.session_state.can_grasped,
+                    previous_contact_fingers,
+                    list(planar_fbg_decision["contact_fingers"]),
+                    animate=st.session_state.get("smooth_animation", True),
+                ),
+                key="planar-hand", height=620, title="二维抓取视图",
+            )
+            st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 7), planar_fbg["wavelength_shifts_nm"], "二维抓取：五指与掌心六路 FBG 波长漂移"), width="stretch")
+            st.caption(f"第 6 路为掌心 FBG：{'检测到掌心接触力' if planar_fbg_decision['palm_contact'] else '当前掌心接触力较弱'}。抓稳判定仍保持“拇指＋至少两根其余手指”规则，且需要接触力达到阈值。")
+        finger_names = ["拇指", "食指", "中指", "无名指", "小指"]
+        planar_record = {
+            "dimension": "二维",
+            "task_phase": st.session_state.two_d_task_phase,
+            "is_grasped": bool(planar_fbg_decision["is_grasped"]),
+            "contact_fingers": [finger_names[index] for index in planar_fbg_decision["contact_fingers"]],
+            "contact_force_n": np.asarray(planar_fbg_decision["contact_force_n"], dtype=float).tolist(),
+            "palm_touch_n": float(planar_fbg_decision["palm_touch_n"]),
+            "wavelength_shifts_nm": np.asarray(planar_fbg["wavelength_shifts_nm"], dtype=float).tolist(),
+            "temperature_c": temperature,
+            "noise_nm": noise,
+            "seed": int(seed),
+            "target_position": np.asarray(can_center, dtype=float).tolist(),
+        }
+        export_heading("planar")
+        planar_download_a, planar_download_b = st.columns(2)
+        planar_download_a.download_button(
+            "下载二维抓取 FBG 读数 CSV",
+            csv_bytes(["拇指 FBG", "食指 FBG", "中指 FBG", "无名指 FBG", "小指 FBG", "掌心 FBG"], np.asarray(planar_fbg["wavelength_shifts_nm"])),
+            "planar_grasp_fbg_readings.csv", "text/csv",
+        )
+        planar_download_b.download_button(
+            "下载二维抓取实验报告", experiments.grasp_report(planar_record).encode("utf-8-sig"),
+            "planar_grasp_report.txt", "text/plain",
+        )
+        with st.expander("进阶：二维重复采样与布置对比", expanded=False):
+            st.markdown("#### 重复采样与传感器布置实验")
+            planar_repeat_samples = st.select_slider(
+                "二维重复采样次数", options=[20, 50, 100, 200], value=50, key="planar_repeat_samples"
+            )
+            planar_study = experiments.run_planar_grasp_noise_study(
+                planar_fbg, finger_curls, temperature, noise, int(planar_repeat_samples), (int(seed) + 330) % 2**32
+            )
+            planar_layouts = experiments.compare_grasp_sensor_layouts(
+                planar_study["baseline_contact_force_n"],
+                planar_study["baseline_palm_touch_n"],
+                requires_palm=False,
+            )
+            planar_stats = st.columns(4)
+            planar_stats[0].metric("无噪声基准", "抓稳" if planar_study["baseline_is_grasped"] else "未抓稳")
+            planar_stats[1].metric("重复采样抓稳率", f"{planar_study['grasped_rate_percent']:.1f}%")
+            planar_stats[2].metric("判定一致率", f"{planar_study['decision_consistency_percent']:.1f}%")
+            planar_stats[3].metric("判定翻转", f"{planar_study['decision_flip_count']} 次")
+            st.caption(
+                f"当前 σ={noise:.4f} nm：五指反演合力 {planar_study['total_force_mean_n']:.3f} ± "
+                f"{planar_study['total_force_std_n']:.3f} N；掌心反演力 {planar_study['palm_force_mean_n']:.3f} ± "
+                f"{planar_study['palm_force_std_n']:.3f} N。判定一致率表示重复结果与无噪声当前姿态判定相同的比例。"
+            )
+            st.dataframe(planar_layouts, hide_index=True, width="stretch")
+            st.caption("布置表的受力覆盖率只针对当前姿态，无接触力时记为 0%；‘可完整执行当前判定’表示所列通道能否观察二维规则所需的全部五指。")
+            with st.expander("查看二维逐次采样记录", expanded=False):
+                st.dataframe(planar_study["samples"], hide_index=True, width="stretch")
+            planar_repeat_a, planar_repeat_b = st.columns(2)
+            planar_repeat_a.download_button(
+                "下载二维重复采样 CSV", experiments.grasp_noise_study_csv(planar_study),
+                "planar_grasp_repeatability.csv", "text/csv",
+            )
+            planar_repeat_b.download_button(
+                "下载二维抓取稳健性报告",
+                experiments.grasp_robustness_report("二维", planar_study, planar_layouts).encode("utf-8-sig"),
+                "planar_grasp_robustness_report.txt", "text/plain",
+            )
+        st.session_state.two_d_previous_pose = display_pose
+        st.session_state.two_d_previous_can_center = np.asarray(can_center, dtype=float)
+        st.session_state.two_d_previous_grasped = bool(st.session_state.can_grasped)
+        st.session_state.two_d_previous_contact_fingers = list(planar_fbg_decision["contact_fingers"])
+
+    render_planar_grasp()
 
 with tactile_tab:
     st.subheader("多材质触觉识别：五指与掌心 FBG 接触分布")
-    tactile_demo_slot = st.container()
+    experiment_shortcuts("tactile")
     module_learning_frame(
-        "理解六路 FBG 接触分布如何区分软体、硬块、曲面与薄板。",
-        "先载入标准海绵并保存基线 A，再载入其他场景或只提高扰动，比较当前 B。",
-        "关注类别间隔、模板偏差和 24 次重复识别一致率，而不只看单次标签。",
-        "这是预设模板的余弦相似度教学模型；没有使用真实材料训练集，不能替代实物鉴定。",
+        '理解六路 FBG 接触分布如何区分软体、硬块、曲面与薄板。',
+        '载入标准海绵场景，观察六路接触分布；保存基线后，再换一个目标材质。',
+        '关注类别间隔、模板偏差和 24 次重复识别一致率，而不只看单次标签。',
+        '这是预设模板的余弦相似度教学模型；没有使用真实材料训练集，不能替代实物鉴定。',
     )
+    tactile_demo_slot = st.container()
     tactile_defaults = (
         ("tactile_material", "海绵"),
         ("tactile_grip_force", 5.0),
@@ -1068,6 +1166,7 @@ with tactile_tab:
     st.plotly_chart(touch_comparison, width="stretch")
     st.caption("模板偏差比较归一化后的六路形状，因此主要反映接触分布变化，而不是握持力整体变大或变小。重复一致率使用相同条件和连续随机种子重复 24 次。")
 
+    export_heading("tactile")
     if st.button("保存当前为触觉基线 A", key="save_tactile_baseline"):
         st.session_state.tactile_baseline = tactile_record
     tactile_baseline = st.session_state.get("tactile_baseline")
@@ -1114,13 +1213,14 @@ with tactile_tab:
 
 with foot_tab:
     st.subheader("机器人足：六区足底接触、地形与步态相位")
-    foot_demo_slot = st.container()
+    experiment_shortcuts("foot")
     module_learning_frame(
-        "理解六区载荷如何形成压力中心，并量化 FBG 反演误差。",
-        "先载入平地中期并保存基线 A，再比较脚跟、前掌、柔软地面或摆动期。",
-        "同时查看真实载荷、反演载荷、区域 MAE 与 CoP 位置误差；低载荷时先看可靠性提示。",
-        "六区采用独立线性标定，未包含动态冲击、足部姿态、材料迟滞和实物封装标定。",
+        '理解六区载荷如何形成压力中心，并量化 FBG 反演误差。',
+        '先载入平地场景，再切换步态或载荷；观察六个足底区域如何分担压力。',
+        '同时查看真实载荷、反演载荷、区域 MAE 与 CoP 位置误差；低载荷时先看可靠性提示。',
+        '六区采用独立线性标定，未包含动态冲击、足部姿态、材料迟滞和实物封装标定。',
     )
+    foot_demo_slot = st.container()
     foot_defaults = (
         ("foot_terrain", "平地"), ("foot_load", 180.0),
         ("foot_phase", 55), ("foot_support", "支撑期"),
@@ -1167,7 +1267,7 @@ with foot_tab:
         "drift_nm": drift,
     })
     with foot_demo_slot:
-        demo_views.render_demo("foot", foot_record["parameters"])
+        demo_views.render_demo("foot", {**foot_record["parameters"], "inspection_channel": st.session_state.get("foot_inspector_zone", 0)})
     foot_results = foot_record["results"]
     zones = np.asarray(foot_results["true_zone_loads_n"], dtype=float)
     estimated_zones = np.asarray(foot_results["estimated_zone_loads_n"], dtype=float)
@@ -1188,6 +1288,8 @@ with foot_tab:
         st.info("当前载荷充足，但存在模拟通道失效，CoP 仅供参考；请结合区域 MAE 和真实/反演载荷对照。")
     if failed == "足底区域 1":
         st.warning("足底区域 1 的真实载荷仍保留，但该通道读数已替换为侧栏漂移值；误差指标会反映这次传感失效。")
+    demo_views.inspector_navigation("foot")
+    foot_inspector.render(foot_record)
     st.subheader("实时 FBG 和足底载荷结果")
     st.plotly_chart(
         visuals.foot_fbg_dashboard_figure(foot_fbg["wavelength_shifts_nm"], zones),
@@ -1215,6 +1317,7 @@ with foot_tab:
     st.plotly_chart(load_comparison, width="stretch")
     st.caption("足底示意图的颜色和 CoP 标记都来自 FBG 反演载荷；下方分组柱图再与真实载荷对照。区域 MAE 是六区绝对误差的平均值，CoP 位置误差是在当前归一化足底坐标中的欧氏距离。低于 20 N 的支撑力会标记为低载荷观察。")
 
+    export_heading("foot")
     if st.button("保存当前为足底基线 A", key="save_foot_baseline"):
         st.session_state.foot_baseline = foot_record
     foot_baseline = st.session_state.get("foot_baseline")
@@ -1275,6 +1378,13 @@ with foot_tab:
 
 with calibration_tab:
     st.subheader("FBG 标定与诊断")
+    experiment_shortcuts("calibration")
+    module_learning_frame(
+        '理解弯曲、温补与故障诊断。',
+        '先载入“理想标定”，拖动弯曲角滑块；保存基线后，再调侧栏温度比较温补结果。',
+        '比较真实角与反演角，再展开冗余诊断和接触反演。',
+        '解析教学模型，真实设备需要独立标定。',
+    )
     calibration_defaults = (
         ("hand_bend_angle", 0.0),
         ("calibration_length", 80.0),
@@ -1355,6 +1465,7 @@ with calibration_tab:
     calibration_chart.add_bar(name="扣除已知温漂", x=["FBG 1", "FBG 2", "FBG 3"], y=result["compensated_shifts_nm"])
     calibration_chart.update_layout(title="三枚 FBG：温补前后", yaxis_title="波长漂移 (nm)", barmode="group", template="plotly_white", height=360, legend=dict(orientation="h"))
     st.plotly_chart(calibration_chart, width="stretch")
+    export_heading("calibration")
     st.download_button("下载手部 FBG 读数 CSV", csv_bytes(["FBG 1", "FBG 2", "FBG 3"], finger["wavelength_shifts_nm"]), "hand_fbg_readings.csv", "text/csv")
     st.caption("上图为真实手指中心线与 FBG 位置，下方柱图为当前三路波长漂移。恒曲率模型中三路理想应变相同；反演先按已知温差扣除共模温漂，再由三路平均应变计算弯曲角，并非由通道间差异反演。")
     if failed.startswith("手部 FBG"):
@@ -1396,7 +1507,7 @@ with calibration_tab:
                                 "B − A": "不可比较" if old is None or new is None else f"{new - old:+.4f}"})
         st.dataframe(result_rows, hide_index=True, width="stretch")
         st.caption("差值是两次教学实验的结果变化，不是准确度提升的证明。本页重置保留 A；刷新或关闭会话可能丢失，请下载记录留存。")
-    with st.expander("保存与恢复实验记录"):
+    with st.container(border=True):
         st.caption("记录只包含单指弯曲标定的输入、随机种子、结果及可选基线 A，不包含其他页面状态。导入时重新计算结果；文件中的旧结果不作为测量依据。")
         st.download_button("下载可恢复记录 JSON", experiments.export_record(current_experiment, baseline), "calibration_experiment.json", "application/json")
         st.download_button("下载中文实验摘要", experiments.calibration_report(current_experiment, baseline).encode("utf-8-sig"), "calibration_experiment_summary.txt", "text/plain")
@@ -1411,481 +1522,502 @@ with calibration_tab:
                 st.button("导入参数并替换基线 A", key="import_calibration_record", on_click=restore_calibration_record, args=(imported_current, imported_baseline))
 
     st.divider()
-    st.subheader("冗余 FBG 故障诊断与容错反演")
-    fault_left, fault_right = st.columns([1, 2])
-    with fault_left:
-        redundant_angle = st.slider("冗余通道真实弯曲角 (°)", -90.0, 90.0, step=1.0, key="calibration_redundant_angle")
-        fault_mode = st.selectbox("故障类型", ["无", "漂移", "断纤", "噪声增大"], key="calibration_fault_mode")
-        fault_channel = st.slider("故障通道", 1, 4, step=1, key="calibration_fault_channel")
-    redundant = models.simulate_redundant_finger_fbg(
-        redundant_angle, 80.0, 1.0, temperature, fault_mode, fault_channel
-    )
-    redundant_diagnosis = models.diagnose_redundant_fbg(
-        redundant["wavelength_shifts_nm"], 80.0, 1.0, temperature
-    )
-    with fault_right:
-        st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 5), redundant["wavelength_shifts_nm"], "四路冗余 FBG：原始波长漂移"), width="stretch")
-    fault_a, fault_b, fault_c = st.columns(3)
-    fault_a.metric("诊断异常通道", "、".join(f"FBG {item}" for item in redundant_diagnosis["fault_channels"]) or "无")
-    fault_b.metric("容错反演角度", f"{redundant_diagnosis['estimated_angle_deg']:.1f} °")
-    fault_c.metric("共模温漂", f"{redundant_diagnosis['common_temperature_shift_nm']:.4f} nm")
-    st.caption("容错反演会剔除偏离冗余中位数的通道；断纤、间歇失效和高噪声在真实系统中需要时间序列阈值与硬件自检共同确认。")
-    st.caption("四路柱高应基本一致，故障通道会明显偏离中位数；诊断剔除该通道后反演角度。")
+    with st.expander("进阶：冗余诊断与接触反演", expanded=False):
+        st.subheader("冗余 FBG 故障诊断与容错反演")
+        fault_left, fault_right = st.columns([1, 2])
+        with fault_left:
+            redundant_angle = st.slider("冗余通道真实弯曲角 (°)", -90.0, 90.0, step=1.0, key="calibration_redundant_angle")
+            fault_mode = st.selectbox("故障类型", ["无", "漂移", "断纤", "噪声增大"], key="calibration_fault_mode")
+            fault_channel = st.slider("故障通道", 1, 4, step=1, key="calibration_fault_channel")
+        redundant = models.simulate_redundant_finger_fbg(
+            redundant_angle, 80.0, 1.0, temperature, fault_mode, fault_channel
+        )
+        redundant_diagnosis = models.diagnose_redundant_fbg(
+            redundant["wavelength_shifts_nm"], 80.0, 1.0, temperature
+        )
+        with fault_right:
+            st.plotly_chart(visuals.sensor_bar_figure(np.arange(1, 5), redundant["wavelength_shifts_nm"], "四路冗余 FBG：原始波长漂移"), width="stretch")
+        fault_a, fault_b, fault_c = st.columns(3)
+        fault_a.metric("诊断异常通道", "、".join(f"FBG {item}" for item in redundant_diagnosis["fault_channels"]) or "无")
+        fault_b.metric("容错反演角度", f"{redundant_diagnosis['estimated_angle_deg']:.1f} °")
+        fault_c.metric("共模温漂", f"{redundant_diagnosis['common_temperature_shift_nm']:.4f} nm")
+        st.caption("容错反演会剔除偏离冗余中位数的通道；断纤、间歇失效和高噪声在真实系统中需要时间序列阈值与硬件自检共同确认。")
+        st.caption("四路柱高应基本一致，故障通道会明显偏离中位数；诊断剔除该通道后反演角度。")
 
-    st.divider()
-    st.subheader("指尖接触位置与法向力反演")
-    left, right = st.columns([1, 2])
-    with left:
-        contact_position = st.slider("真实接触位置 (mm)", 0.0, 70.0, step=0.5, key="calibration_contact_position")
-        force = st.slider("真实法向力 (N)", 0.0, 10.0, step=0.1, key="calibration_contact_force")
-        influence_width = st.slider("封装传力宽度 (mm)", 5.0, 25.0, step=0.5, key="calibration_influence_width")
-    contact_positions = np.array([15.0, 35.0, 55.0])
-    contact = models.simulate_contact(contact_position, force, contact_positions, influence_width, 2e-4, temperature, noise, int(seed))
-    estimated_position, estimated_force = models.estimate_contact(contact["wavelength_shifts_nm"], contact_positions, influence_width, 2e-4, temperature)
-    with right:
-        st.plotly_chart(visuals.contact_figure(contact, estimated_position), width="stretch")
-    metric_a, metric_b, metric_c = st.columns(3)
-    metric_a.metric("真实接触点", f"{contact_position:.1f} mm")
-    metric_b.metric("反演接触点", f"{estimated_position:.1f} mm", f"误差 {estimated_position - contact_position:+.1f} mm")
-    metric_c.metric("反演法向力", f"{estimated_force:.2f} N", f"误差 {estimated_force - force:+.2f} N")
-    st.plotly_chart(visuals.sensor_bar_figure(contact_positions, contact["wavelength_shifts_nm"], "各 FBG 的波长漂移"), width="stretch")
-    st.download_button("下载当前接触读数 CSV", csv_bytes(["FBG 1", "FBG 2", "FBG 3"], contact["wavelength_shifts_nm"]), "contact_fbg_readings.csv", "text/csv")
-    st.caption("曲线为三枚 FBG 的应变分布，接触点附近的 FBG 应变最高；反演接触位置与法向力由网格最小二乘恢复。")
-    with st.expander("模型边界"):
-        st.write("这里用高斯传递函数表示接触力向光纤的传递。它能帮助理解传感器位置、封装刚度与可辨识性，但不能替代软材料非线性、胶层、摩擦和滞后的实验标定。")
-    tab_jump_button(2, "下一步 → 手部：三维抓取", "hand_navigation", "三维抓取")
+        st.divider()
+        st.subheader("指尖接触位置与法向力反演")
+        left, right = st.columns([1, 2])
+        with left:
+            contact_position = st.slider("真实接触位置 (mm)", 0.0, 70.0, step=0.5, key="calibration_contact_position")
+            force = st.slider("真实法向力 (N)", 0.0, 10.0, step=0.1, key="calibration_contact_force")
+            influence_width = st.slider("封装传力宽度 (mm)", 5.0, 25.0, step=0.5, key="calibration_influence_width")
+        contact_positions = np.array([15.0, 35.0, 55.0])
+        contact = models.simulate_contact(contact_position, force, contact_positions, influence_width, 2e-4, temperature, noise, int(seed))
+        estimated_position, estimated_force = models.estimate_contact(contact["wavelength_shifts_nm"], contact_positions, influence_width, 2e-4, temperature)
+        with right:
+            st.plotly_chart(visuals.contact_figure(contact, estimated_position), width="stretch")
+        metric_a, metric_b, metric_c = st.columns(3)
+        metric_a.metric("真实接触点", f"{contact_position:.1f} mm")
+        metric_b.metric("反演接触点", f"{estimated_position:.1f} mm", f"误差 {estimated_position - contact_position:+.1f} mm")
+        metric_c.metric("反演法向力", f"{estimated_force:.2f} N", f"误差 {estimated_force - force:+.2f} N")
+        st.plotly_chart(visuals.sensor_bar_figure(contact_positions, contact["wavelength_shifts_nm"], "各 FBG 的波长漂移"), width="stretch")
+        st.download_button("下载当前接触读数 CSV", csv_bytes(["FBG 1", "FBG 2", "FBG 3"], contact["wavelength_shifts_nm"]), "contact_fbg_readings.csv", "text/csv")
+        st.caption("曲线为三枚 FBG 的应变分布，接触点附近的 FBG 应变最高；反演接触位置与法向力由网格最小二乘恢复。")
+        with st.expander("模型边界"):
+            st.write("这里用高斯传递函数表示接触力向光纤的传递。它能帮助理解传感器位置、封装刚度与可辨识性，但不能替代软材料非线性、胶层、摩擦和滞后的实验标定。")
+        tab_jump_button(2, "下一步 → 手部：三维抓取", "hand_navigation", "三维抓取")
 
 with hand_3d_tab:
-    st.subheader("三维抓取传感：独立接触与 FBG 读数")
-    module_learning_frame(
-        "理解三维位置、14 个指节触觉通道和掌心通道如何共同决定抓稳状态。",
-        "完成寻找与抓取任务后，提高侧栏噪声并做多次采样，对照单次模型状态与统计稳定性。",
-        "先确认掌心、拇指和其余手指三个条件，再看判定一致率、翻转次数和布置可观测性。",
-        "重复实验只扰动波长读数；布置对照不包含真实封装、串扰、摩擦和动态力控。",
-    )
-    st.caption("本页不读取二维抓取的姿态、罐体位置或抓取结果。它以三维手自身的五指屈曲与罐体 X/Y/Z 偏移，独立估算指尖接触、握持稳定度和五指＋掌心六路 FBG 读数。")
+    @st.fragment
+    def render_spatial_grasp():
+        st.subheader("三维抓取传感：独立接触与 FBG 读数")
+        experiment_shortcuts("three-d")
+        module_learning_frame(
+            '理解三维位置、14 个指节触觉通道和掌心通道如何共同决定抓稳状态。',
+            '点击“开始三维寻找与抓取任务”，逐次点击“执行下一步”；未抓稳时先看缺少哪个接触条件。',
+            '先确认掌心、拇指和其余手指三个条件，再看判定一致率、翻转次数和布置可观测性。',
+            '重复实验只扰动波长读数；布置对照不包含真实封装、串扰、摩擦和动态力控。',
+            has_baseline=False,
+        )
+        st.caption("本页不读取二维抓取的姿态、罐体位置或抓取结果。它以三维手自身的五指屈曲与罐体 X/Y/Z 偏移，独立估算指尖接触、握持稳定度和五指＋掌心六路 FBG 读数。")
 
-    if "three_d_action" not in st.session_state:
-        st.session_state.three_d_action = "三维张开"
-        for key, value in zip(
-            ("three_d_shoulder", "three_d_elbow", "three_d_wrist"), (38.0, -58.0, 18.0)
-        ):
-            st.session_state[key] = value
-        for key, value in zip(
-            (
+        if "three_d_action" not in st.session_state:
+            st.session_state.three_d_action = "三维张开"
+            for key, value in zip(
+                ("three_d_shoulder", "three_d_elbow", "three_d_wrist"), (38.0, -58.0, 18.0)
+            ):
+                st.session_state[key] = value
+            for key, value in zip(
+                (
+                    "three_d_thumb_mcp", "three_d_thumb_ip",
+                    "three_d_index_mcp", "three_d_index_pip", "three_d_index_dip",
+                    "three_d_middle_mcp", "three_d_middle_pip", "three_d_middle_dip",
+                    "three_d_ring_mcp", "three_d_ring_pip", "three_d_ring_dip",
+                    "three_d_little_mcp", "three_d_little_pip", "three_d_little_dip",
+                ),
+                (0.0,) * 14,
+            ):
+                st.session_state[key] = value
+
+        # 将此前“一键握拳”留下的拇指 IP 旧值迁移到双关节握拳预置。
+        if st.session_state.three_d_action == "三维握拳" and st.session_state.get("three_d_fist_profile_version", 0) < 4:
+            st.session_state.three_d_thumb_mcp = 90.0
+            st.session_state.three_d_thumb_ip = 90.0
+            st.session_state.three_d_fist_profile_version = 4
+
+        def set_three_d_grasp_pose(closed: bool) -> None:
+            st.session_state.three_d_action = "三维握拳" if closed else "三维张开"
+            joint_angles = (90.0, 90.0, 72.0, 104.0, 74.0, 72.0, 104.0, 74.0, 72.0, 104.0, 74.0, 72.0, 104.0, 74.0) if closed else (0.0,) * 14
+            for key, value in zip(
+                (
+                    "three_d_thumb_mcp", "three_d_thumb_ip",
+                    "three_d_index_mcp", "three_d_index_pip", "three_d_index_dip",
+                    "three_d_middle_mcp", "three_d_middle_pip", "three_d_middle_dip",
+                    "three_d_ring_mcp", "three_d_ring_pip", "three_d_ring_dip",
+                    "three_d_little_mcp", "three_d_little_pip", "three_d_little_dip",
+                ), joint_angles
+            ):
+                st.session_state[key] = value
+            st.session_state.three_d_fist_profile_version = 4
+
+        def reset_three_d_initial_pose() -> None:
+            """Restore every independently controlled 3D node to its initial pose."""
+            st.session_state.three_d_action = "三维初始"
+            for key, value in zip(
+                ("three_d_shoulder", "three_d_elbow", "three_d_wrist"), (38.0, -58.0, 18.0)
+            ):
+                st.session_state[key] = value
+            for key in (
                 "three_d_thumb_mcp", "three_d_thumb_ip",
                 "three_d_index_mcp", "three_d_index_pip", "three_d_index_dip",
                 "three_d_middle_mcp", "three_d_middle_pip", "three_d_middle_dip",
                 "three_d_ring_mcp", "three_d_ring_pip", "three_d_ring_dip",
                 "three_d_little_mcp", "three_d_little_pip", "three_d_little_dip",
-            ),
-            (0.0,) * 14,
-        ):
-            st.session_state[key] = value
+            ):
+                st.session_state[key] = 0.0
+            for key in ("three_d_can_x", "three_d_can_y", "three_d_can_z"):
+                st.session_state[key] = 0.0
+            for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"):
+                st.session_state[key] = 0.0
 
-    # 将此前“一键握拳”留下的拇指 IP 旧值迁移到双关节握拳预置。
-    if st.session_state.three_d_action == "三维握拳" and st.session_state.get("three_d_fist_profile_version", 0) < 4:
-        st.session_state.three_d_thumb_mcp = 90.0
-        st.session_state.three_d_thumb_ip = 90.0
-        st.session_state.three_d_fist_profile_version = 4
-
-    def set_three_d_grasp_pose(closed: bool) -> None:
-        st.session_state.three_d_action = "三维握拳" if closed else "三维张开"
-        joint_angles = (90.0, 90.0, 72.0, 104.0, 74.0, 72.0, 104.0, 74.0, 72.0, 104.0, 74.0, 72.0, 104.0, 74.0) if closed else (0.0,) * 14
-        for key, value in zip(
-            (
-                "three_d_thumb_mcp", "three_d_thumb_ip",
-                "three_d_index_mcp", "three_d_index_pip", "three_d_index_dip",
-                "three_d_middle_mcp", "three_d_middle_pip", "three_d_middle_dip",
-                "three_d_ring_mcp", "three_d_ring_pip", "three_d_ring_dip",
-                "three_d_little_mcp", "three_d_little_pip", "three_d_little_dip",
-            ), joint_angles
-        ):
-            st.session_state[key] = value
-        st.session_state.three_d_fist_profile_version = 4
-
-    def reset_three_d_initial_pose() -> None:
-        """Restore every independently controlled 3D node to its initial pose."""
-        st.session_state.three_d_action = "三维初始"
-        for key, value in zip(
-            ("three_d_shoulder", "three_d_elbow", "three_d_wrist"), (38.0, -58.0, 18.0)
-        ):
-            st.session_state[key] = value
-        for key in (
-            "three_d_thumb_mcp", "three_d_thumb_ip",
-            "three_d_index_mcp", "three_d_index_pip", "three_d_index_dip",
-            "three_d_middle_mcp", "three_d_middle_pip", "three_d_middle_dip",
-            "three_d_ring_mcp", "three_d_ring_pip", "three_d_ring_dip",
-            "three_d_little_mcp", "three_d_little_pip", "three_d_little_dip",
-        ):
-            st.session_state[key] = 0.0
-        for key in ("three_d_can_x", "three_d_can_y", "three_d_can_z"):
-            st.session_state[key] = 0.0
+        if "three_d_task_phase" not in st.session_state:
+            st.session_state.three_d_task_phase = "未启动"
         for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"):
-            st.session_state[key] = 0.0
+            st.session_state.setdefault(key, 0.0)
+        st.session_state.setdefault("three_d_previous_reach", (0.0, 0.0, 0.0))
+        st.session_state.setdefault("three_d_previous_target", (0.0, 0.0, 0.0))
+        st.session_state.setdefault("three_d_previous_arm_joints", (38.0, -58.0, 18.0))
+        st.session_state.setdefault("three_d_previous_finger_joints", ((0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
 
-    if "three_d_task_phase" not in st.session_state:
-        st.session_state.three_d_task_phase = "未启动"
-    for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"):
-        st.session_state.setdefault(key, 0.0)
-    st.session_state.setdefault("three_d_previous_reach", (0.0, 0.0, 0.0))
-    st.session_state.setdefault("three_d_previous_target", (0.0, 0.0, 0.0))
-    st.session_state.setdefault("three_d_previous_arm_joints", (38.0, -58.0, 18.0))
-    st.session_state.setdefault("three_d_previous_finger_joints", ((0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
-
-    def remember_three_d_render_state() -> None:
-        st.session_state.three_d_previous_reach = tuple(st.session_state[key] for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"))
-        st.session_state.three_d_previous_target = tuple(st.session_state[key] for key in ("three_d_can_x", "three_d_can_y", "three_d_can_z"))
-        st.session_state.three_d_previous_arm_joints = tuple(st.session_state[key] for key in ("three_d_shoulder", "three_d_elbow", "three_d_wrist"))
-        st.session_state.three_d_previous_finger_joints = (
-            (st.session_state["three_d_thumb_mcp"], st.session_state["three_d_thumb_ip"]),
-            (st.session_state["three_d_index_mcp"], st.session_state["three_d_index_pip"], st.session_state["three_d_index_dip"]),
-            (st.session_state["three_d_middle_mcp"], st.session_state["three_d_middle_pip"], st.session_state["three_d_middle_dip"]),
-            (st.session_state["three_d_ring_mcp"], st.session_state["three_d_ring_pip"], st.session_state["three_d_ring_dip"]),
-            (st.session_state["three_d_little_mcp"], st.session_state["three_d_little_pip"], st.session_state["three_d_little_dip"]),
-        )
-
-    def current_three_d_grasp_is_verified() -> bool:
-        """Evaluate the actual widget state immediately after hand closure."""
-        finger_angles = (
-            (st.session_state["three_d_thumb_mcp"], st.session_state["three_d_thumb_ip"]),
-            (st.session_state["three_d_index_mcp"], st.session_state["three_d_index_pip"], st.session_state["three_d_index_dip"]),
-            (st.session_state["three_d_middle_mcp"], st.session_state["three_d_middle_pip"], st.session_state["three_d_middle_dip"]),
-            (st.session_state["three_d_ring_mcp"], st.session_state["three_d_ring_pip"], st.session_state["three_d_ring_dip"]),
-            (st.session_state["three_d_little_mcp"], st.session_state["three_d_little_pip"], st.session_state["three_d_little_dip"]),
-        )
-        curls = tuple(float(np.mean(angles)) for angles in finger_angles)
-        relative_target = models.relative_3d_target_offset(
-            tuple(st.session_state[key] for key in ("three_d_can_x", "three_d_can_y", "three_d_can_z")),
-            tuple(st.session_state[key] for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z")),
-        )
-        sensing = models.evaluate_3d_grasp_sensing(
-            curls,
-            relative_target,
-            temperature,
-            finger_joint_angles_deg=finger_angles,
-        )
-        return bool(models.classify_3d_grasp_from_fbg(sensing, temperature)["is_grasped"])
-
-    def start_three_d_grasp_task() -> None:
-        remember_three_d_render_state()
-        set_three_d_grasp_pose(False)
-        for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"):
-            st.session_state[key] = 0.0
-        st.session_state.three_d_task_phase = "寻找目标"
-
-    def advance_three_d_grasp_task() -> None:
-        phase = st.session_state.three_d_task_phase
-        remember_three_d_render_state()
-        if phase == "抓取失败":
-            st.session_state.three_d_task_phase = "对准目标"
-            return
-        if phase == "寻找目标":
-            st.session_state.three_d_found_target = tuple(
-                st.session_state[key] for key in ("three_d_can_x", "three_d_can_y", "three_d_can_z")
+        def remember_three_d_render_state() -> None:
+            st.session_state.three_d_previous_reach = tuple(st.session_state[key] for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"))
+            st.session_state.three_d_previous_target = tuple(st.session_state[key] for key in ("three_d_can_x", "three_d_can_y", "three_d_can_z"))
+            st.session_state.three_d_previous_arm_joints = tuple(st.session_state[key] for key in ("three_d_shoulder", "three_d_elbow", "three_d_wrist"))
+            st.session_state.three_d_previous_finger_joints = (
+                (st.session_state["three_d_thumb_mcp"], st.session_state["three_d_thumb_ip"]),
+                (st.session_state["three_d_index_mcp"], st.session_state["three_d_index_pip"], st.session_state["three_d_index_dip"]),
+                (st.session_state["three_d_middle_mcp"], st.session_state["three_d_middle_pip"], st.session_state["three_d_middle_dip"]),
+                (st.session_state["three_d_ring_mcp"], st.session_state["three_d_ring_pip"], st.session_state["three_d_ring_dip"]),
+                (st.session_state["three_d_little_mcp"], st.session_state["three_d_little_pip"], st.session_state["three_d_little_dip"]),
             )
-            # 先移动到目标附近的扫描点，再在“对准目标”精确靠近，让寻找过程有可见动作。
-            for reach_key, target_key in zip(
-                ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"),
-                ("three_d_can_x", "three_d_can_y", "three_d_can_z"),
-            ):
-                st.session_state[reach_key] = st.session_state[target_key] + (2.0 if reach_key == "three_d_reach_x" else 0.0)
-            st.session_state.three_d_task_phase = models.next_grasp_task_phase(phase, False)
-            return
-        if phase == "对准目标":
-            # 保持物体世界坐标不变，移动手部抓取包络到已定位的目标坐标。
-            for reach_key, target_key in zip(
-                ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"),
-                ("three_d_can_x", "three_d_can_y", "three_d_can_z"),
-            ):
-                st.session_state[reach_key] = st.session_state[target_key]
-            st.session_state.three_d_task_phase = models.next_grasp_task_phase(phase, False)
-            return
-        if phase == "闭合抓取":
-            set_three_d_grasp_pose(True)
-            next_phase = models.next_grasp_task_phase("闭合抓取", current_three_d_grasp_is_verified())
-            st.session_state.three_d_task_phase = next_phase
-            if next_phase == "搬运目标":
-                for key, value in zip(("three_d_shoulder", "three_d_elbow", "three_d_wrist"), (55.0, -35.0, 15.0)):
-                    st.session_state[key] = value
-            return
-        if phase == "搬运目标":
+
+        def current_three_d_grasp_is_verified() -> bool:
+            """Evaluate the actual widget state immediately after hand closure."""
+            finger_angles = (
+                (st.session_state["three_d_thumb_mcp"], st.session_state["three_d_thumb_ip"]),
+                (st.session_state["three_d_index_mcp"], st.session_state["three_d_index_pip"], st.session_state["three_d_index_dip"]),
+                (st.session_state["three_d_middle_mcp"], st.session_state["three_d_middle_pip"], st.session_state["three_d_middle_dip"]),
+                (st.session_state["three_d_ring_mcp"], st.session_state["three_d_ring_pip"], st.session_state["three_d_ring_dip"]),
+                (st.session_state["three_d_little_mcp"], st.session_state["three_d_little_pip"], st.session_state["three_d_little_dip"]),
+            )
+            curls = tuple(float(np.mean(angles)) for angles in finger_angles)
+            relative_target = models.relative_3d_target_offset(
+                tuple(st.session_state[key] for key in ("three_d_can_x", "three_d_can_y", "three_d_can_z")),
+                tuple(st.session_state[key] for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z")),
+            )
+            sensing = models.evaluate_3d_grasp_sensing(
+                curls,
+                relative_target,
+                temperature,
+                finger_joint_angles_deg=finger_angles,
+            )
+            return bool(models.classify_3d_grasp_from_fbg(sensing, temperature)["is_grasped"])
+
+        def start_three_d_grasp_task() -> None:
+            remember_three_d_render_state()
             set_three_d_grasp_pose(False)
-            st.session_state.three_d_can_x = st.session_state["three_d_reach_x"] + 1.4
-            st.session_state.three_d_task_phase = models.next_grasp_task_phase(phase, True)
-            return
-        if phase == "松开并放置":
-            st.session_state.three_d_task_phase = models.next_grasp_task_phase(phase, False)
+            for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"):
+                st.session_state[key] = 0.0
+            st.session_state.three_d_task_phase = "寻找目标"
 
-    task_phase = st.session_state.three_d_task_phase
-    controls, display = st.columns([1.15, 2.1], gap="large")
-    with controls:
-        st.markdown("#### 抓取指令")
-        preset_left, preset_right = st.columns(2)
-        preset_left.button(
-            "三维张开手", key="three_d_open", on_click=set_three_d_grasp_pose,
-            args=(False,), width="stretch",
-        )
-        preset_right.button(
-            "三维一键握拳", key="three_d_close", on_click=set_three_d_grasp_pose,
-            args=(True,), width="stretch",
-        )
-        st.button(
-            "恢复三维初始姿态", key="three_d_reset_initial",
-            on_click=reset_three_d_initial_pose, width="stretch",
-        )
-        st.button(
-            "开始三维寻找与抓取任务", key="start_three_d_grasp_task",
-            on_click=start_three_d_grasp_task,
-            disabled=task_phase not in ("未启动", "完成"), width="stretch",
-        )
-        st.button(
-            "执行下一步" if task_phase != "抓取失败" else "重新对准目标",
-            key="advance_three_d_grasp_task", on_click=advance_three_d_grasp_task,
-            disabled=task_phase in ("未启动", "完成"), width="stretch",
-        )
-        st.caption(
-            f"任务状态：{task_phase}。寻找目标 → 对准 → FBG 抓取验证 → 搬运 → 松开放置。"
-        )
-        with st.expander("高级姿态与目标参数", expanded=False):
-            st.caption("用于手动实验；自动任务可直接使用上方指令。拇指含 2 个关节，其余手指各含 3 个关节。")
-            st.markdown("##### 手臂姿态")
-            arm_a, arm_b, arm_c = st.columns(3)
-            with arm_a:
-                three_d_shoulder = st.slider("三维肩关节 (°)", -20.0, 100.0, step=1.0, key="three_d_shoulder")
-            with arm_b:
-                three_d_elbow = st.slider("三维肘关节 (°)", -100.0, 40.0, step=1.0, key="three_d_elbow")
-            with arm_c:
-                three_d_wrist = st.slider("三维腕关节 (°)", -70.0, 70.0, step=1.0, key="three_d_wrist")
-            st.markdown("##### 手指关节")
-            finger_a, finger_b = st.columns(2)
-            with finger_a:
-                three_d_thumb_mcp = st.slider("拇指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_thumb_mcp")
-                three_d_thumb_ip = st.slider("拇指 IP (°)", 0.0, 110.0, step=1.0, key="three_d_thumb_ip")
-                three_d_index_mcp = st.slider("食指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_index_mcp")
-                three_d_index_pip = st.slider("食指 PIP (°)", 0.0, 110.0, step=1.0, key="three_d_index_pip")
-                three_d_index_dip = st.slider("食指 DIP (°)", 0.0, 110.0, step=1.0, key="three_d_index_dip")
-                three_d_middle_mcp = st.slider("中指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_middle_mcp")
-                three_d_middle_pip = st.slider("中指 PIP (°)", 0.0, 110.0, step=1.0, key="three_d_middle_pip")
-            with finger_b:
-                three_d_middle_dip = st.slider("中指 DIP (°)", 0.0, 110.0, step=1.0, key="three_d_middle_dip")
-                three_d_ring_mcp = st.slider("无名指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_ring_mcp")
-                three_d_ring_pip = st.slider("无名指 PIP (°)", 0.0, 110.0, step=1.0, key="three_d_ring_pip")
-                three_d_ring_dip = st.slider("无名指 DIP (°)", 0.0, 110.0, step=1.0, key="three_d_ring_dip")
-                three_d_little_mcp = st.slider("小指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_little_mcp")
-                three_d_little_pip = st.slider("小指 PIP (°)", 0.0, 110.0, step=1.0, key="three_d_little_pip")
-                three_d_little_dip = st.slider("小指 DIP (°)", 0.0, 110.0, step=1.0, key="three_d_little_dip")
-            st.markdown("##### 物体世界坐标")
-            can_a, can_b, can_c = st.columns(3)
-            with can_a:
-                three_d_can_x = st.slider("物体 X 位置", -3.0, 3.0, step=0.1, key="three_d_can_x")
-            with can_b:
-                three_d_can_y = st.slider("物体 Y 位置", -3.0, 3.0, step=0.1, key="three_d_can_y")
-            with can_c:
-                three_d_can_z = st.slider("物体 Z 位置", -3.0, 3.0, step=0.1, key="three_d_can_z")
+        def advance_three_d_grasp_task() -> None:
+            phase = st.session_state.three_d_task_phase
+            remember_three_d_render_state()
+            if phase == "抓取失败":
+                st.session_state.three_d_task_phase = "对准目标"
+                return
+            if phase == "寻找目标":
+                st.session_state.three_d_found_target = tuple(
+                    st.session_state[key] for key in ("three_d_can_x", "three_d_can_y", "three_d_can_z")
+                )
+                # 先移动到目标附近的扫描点，再在“对准目标”精确靠近，让寻找过程有可见动作。
+                for reach_key, target_key in zip(
+                    ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"),
+                    ("three_d_can_x", "three_d_can_y", "three_d_can_z"),
+                ):
+                    st.session_state[reach_key] = st.session_state[target_key] + (2.0 if reach_key == "three_d_reach_x" else 0.0)
+                st.session_state.three_d_task_phase = models.next_grasp_task_phase(phase, False)
+                return
+            if phase == "对准目标":
+                # 保持物体世界坐标不变，移动手部抓取包络到已定位的目标坐标。
+                for reach_key, target_key in zip(
+                    ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"),
+                    ("three_d_can_x", "three_d_can_y", "three_d_can_z"),
+                ):
+                    st.session_state[reach_key] = st.session_state[target_key]
+                st.session_state.three_d_task_phase = models.next_grasp_task_phase(phase, False)
+                return
+            if phase == "闭合抓取":
+                set_three_d_grasp_pose(True)
+                next_phase = models.next_grasp_task_phase("闭合抓取", current_three_d_grasp_is_verified())
+                st.session_state.three_d_task_phase = next_phase
+                if next_phase == "搬运目标":
+                    for key, value in zip(("three_d_shoulder", "three_d_elbow", "three_d_wrist"), (55.0, -35.0, 15.0)):
+                        st.session_state[key] = value
+                return
+            if phase == "搬运目标":
+                set_three_d_grasp_pose(False)
+                st.session_state.three_d_can_x = st.session_state["three_d_reach_x"] + 1.4
+                st.session_state.three_d_task_phase = models.next_grasp_task_phase(phase, True)
+                return
+            if phase == "松开并放置":
+                st.session_state.three_d_task_phase = models.next_grasp_task_phase(phase, False)
 
-    three_d_joints = (three_d_shoulder, three_d_elbow, three_d_wrist)
-    three_d_finger_joints = (
-        (three_d_thumb_mcp, three_d_thumb_ip),
-        (three_d_index_mcp, three_d_index_pip, three_d_index_dip),
-        (three_d_middle_mcp, three_d_middle_pip, three_d_middle_dip),
-        (three_d_ring_mcp, three_d_ring_pip, three_d_ring_dip),
-        (three_d_little_mcp, three_d_little_pip, three_d_little_dip),
-    )
-    three_d_curls = tuple(float(np.mean(angles)) for angles in three_d_finger_joints)
-    three_d_target_world = (three_d_can_x, three_d_can_y, three_d_can_z)
-    three_d_hand_reach = tuple(st.session_state[key] for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"))
-    three_d_can_offset = models.relative_3d_target_offset(three_d_target_world, three_d_hand_reach)
-    three_d_sensing = models.evaluate_3d_grasp_sensing(
-        three_d_curls, three_d_can_offset, temperature,
-        arm_joint_angles_deg=three_d_joints,
-        finger_joint_angles_deg=three_d_finger_joints,
-    )
-    three_d_fbg_decision = models.classify_3d_grasp_from_fbg(three_d_sensing, temperature)
-    three_d_render_finger_joints = three_d_sensing["collision_limited_joint_angles_deg"]
-    three_d_shifts = models.add_gaussian_noise(three_d_sensing["fbg_shifts_nm"], noise, int(seed) + 300)
-    three_d_palm_shift = models.add_gaussian_noise(
-        np.asarray([three_d_sensing["tactile_fbg_shifts_nm"][-1]]), noise, int(seed) + 301
-    )
-    three_d_display_shifts = np.r_[three_d_shifts, three_d_palm_shift]
-
-    grasp_calibration = models.THREE_D_GRASP_CALIBRATION
-    grasp_contacts = three_d_fbg_decision["contact_fingers"]
-    other_contacts = len([index for index in grasp_contacts if index != 0])
-    grasp_conditions = [
-        ("掌心支撑", float(three_d_fbg_decision["palm_touch_n"]) >= grasp_calibration.palm_contact_threshold_n,
-         f"{three_d_fbg_decision['palm_touch_n']:.3f} N", f"≥ {grasp_calibration.palm_contact_threshold_n:g} N"),
-        ("拇指接触", 0 in grasp_contacts,
-         f"{three_d_fbg_decision['contact_force_n'][0]:.3f} N", f"≥ {grasp_calibration.contact_force_threshold_n:g} N"),
-        ("其余手指接触", other_contacts >= 2,
-         f"{other_contacts} 根", f"至少 2 根，每根 ≥ {grasp_calibration.contact_force_threshold_n:g} N"),
-    ]
-    with display:
-        st.markdown("#### 三维交互视图")
-        if three_d_fbg_decision["is_grasped"]:
-            st.success("FBG 已抓稳：掌心、拇指及至少两根其余手指达到触觉阈值。")
-        else:
-            st.warning("尚未满足：" + "、".join(name for name, passed, _, _ in grasp_conditions if not passed) + "。")
-        embedded_view.render_html(
-            visuals.anthropomorphic_hand_html(
-                st.session_state.three_d_action,
-                three_d_joints,
-                three_d_curls,
-                bool(three_d_fbg_decision["is_grasped"]),
-                can_offset=three_d_target_world,
-                previous_can_offset=st.session_state.three_d_previous_target,
-                shoulder_offset=three_d_hand_reach,
-                previous_shoulder_offset=st.session_state.three_d_previous_reach,
-                finger_curl_gain=1.0,
-                finger_joint_angles_deg=three_d_render_finger_joints,
-                previous_joint_angles_deg=st.session_state.three_d_previous_arm_joints,
-                previous_finger_joint_angles_deg=st.session_state.three_d_previous_finger_joints,
-                animate=st.session_state.get("smooth_animation", True),
-            ),
-            key="spatial-hand", height=560, title="三维抓取视图",
-        )
-        st.caption("拖动模型可旋转视角；滚轮缩放保持关闭。物体保持世界坐标，寻找程序移动手部抓取包络至目标。")
-        with st.container(key="three_d_grasp_metrics"):
-            three_d_metrics = st.columns(4)
-            three_d_metrics[0].metric("FBG 触觉接触手指", f"{len(three_d_fbg_decision['contact_fingers'])} / 5")
-            three_d_metrics[1].metric("FBG 反演接触合力", f"{np.asarray(three_d_fbg_decision['contact_force_n']).sum():.2f} N")
-            three_d_metrics[2].metric("握持稳定度", f"{float(three_d_sensing['stability']) * 100:.0f}%")
-            three_d_metrics[3].metric("三维抓取状态", "FBG 已抓稳" if three_d_fbg_decision["is_grasped"] else "FBG 未抓稳")
-        with st.expander("查看抓稳条件与当前读数", expanded=False):
-            st.dataframe([{"判定条件": name, "当前值": value, "要求": threshold, "状态": "已满足" if passed else "未满足"}
-                          for name, passed, value, threshold in grasp_conditions], hide_index=True, width="stretch")
-            st.caption("三个条件全部满足才判定抓稳；读数按显示精度取整，是否达标以未取整的温补结果为准。握持稳定度是独立教学指标，不代替这三个条件。")
-        with st.expander("查看 FBG 路径说明", expanded=False):
-            st.info("青色发光线表示 FBG 封装/走线路径：肩—肘—腕为弯曲监测；掌部两条短线为掌心接触区域；每根手指上的分段线为指节触觉区域。青色只表示传感路径，不表示受力大小；接触后对应路径会变为黄色。")
-            st.caption("先查看物体是否位于手部抓取范围，再调节缺少接触的手指。关节屈曲和柱高本身不能证明抓稳。")
-    st.markdown("#### 传感通道对照")
-    inspected_channel = st.selectbox("查看哪个部位的通道", ["拇指", "食指", "中指", "无名指", "小指", "掌心"], key="three_d_inspect_channel")
-    channel_map = {
-        "拇指": (0, [0, 1]), "食指": (1, [2, 3, 4]), "中指": (2, [5, 6, 7]),
-        "无名指": (3, [8, 9, 10]), "小指": (4, [11, 12, 13]), "掌心": (5, [14]),
-    }
-    overview_index, tactile_indices = channel_map[inspected_channel]
-    st.caption(f"{inspected_channel}：总览第 {overview_index + 1} 路；细分 FBG " + "、".join(str(index + 1) for index in tactile_indices) + "。橙色柱仅标记当前查看的通道，不表示故障或达标；选择不会改变模型姿态。")
-    st.caption("六路总览加入了侧栏噪声；细分触觉读数与当前抓稳判定使用未叠加该噪声的模型信号。侧栏噪声不参与当前抓稳判定，不能用本页验证抗噪性能。")
-    three_d_result_chart, three_d_result_notes = st.columns([3, 2])
-    with three_d_result_chart:
-        overview_chart = visuals.sensor_bar_figure(np.arange(1, 7), three_d_display_shifts, "三维抓取：五指与掌心六路 FBG 波长漂移")
-        overview_chart.update_traces(marker_color=[visuals.COLORS["estimate"] if index == overview_index else visuals.COLORS["sensor"] for index in range(6)])
-        st.plotly_chart(overview_chart, width="stretch")
-    with three_d_result_notes:
-        st.markdown("#### 图表结果说明")
-        st.markdown(
-            "- **第 1–5 路**：拇指至小指的综合弯曲／接触通道。\n"
-            "- **第 6 路**：掌心接触通道；它与五指通道分开显示，不等同于任一手指。\n"
-            "- **柱高**：当前温度、噪声、关节屈曲与接触状态共同作用后的波长漂移。\n"
-            "- **抓稳判定**：温度补偿后，掌心、拇指和至少两根其余手指的触觉条件共同满足时，才显示“FBG 已抓稳”。\n"
-            "- **阅读顺序**：先看六路柱状分布，再对照下方指尖接触力、细分指节／掌心通道和稳定度。"
-        )
-    force_chart = visuals.sensor_bar_figure(np.arange(1, 6), three_d_sensing["contact_force_n"], "三维指尖接触力 (N)")
-    force_chart.update_yaxes(title_text="接触力 (N)")
-    force_chart.update_xaxes(tickvals=[f"FBG {i}" for i in range(1, 6)], ticktext=["拇指", "食指", "中指", "无名指", "小指"])
-    st.plotly_chart(force_chart, width="stretch")
-    tactile_chart = visuals.sensor_bar_figure(np.arange(1, 16), three_d_sensing["tactile_fbg_shifts_nm"], "细分触觉 FBG：14 个指节＋第 15 路掌心")
-    tactile_chart.update_traces(marker_color=[visuals.COLORS["estimate"] if index in tactile_indices else visuals.COLORS["sensor"] for index in range(15)])
-    st.plotly_chart(tactile_chart, width="stretch")
-    tactile_left, tactile_right = st.columns(2)
-    with tactile_left:
-        palm_finger_chart = visuals.sensor_bar_figure(np.arange(1, 7), np.r_[three_d_sensing["palm_touch_n"], three_d_sensing["contact_force_n"]], "手掌与五指触觉 (N)")
-        palm_finger_chart.update_yaxes(title_text="接触力 (N)")
-        palm_finger_chart.update_xaxes(tickvals=[f"FBG {i}" for i in range(1, 7)], ticktext=["掌心", "拇指", "食指", "中指", "无名指", "小指"])
-        st.plotly_chart(palm_finger_chart, width="stretch")
-    with tactile_right:
-        arm_strain_chart = visuals.sensor_bar_figure(np.arange(1, 4), three_d_sensing["arm_bend_strain_ue"], "肩、肘、腕 FBG 弯曲应变 (με)")
-        arm_strain_chart.update_yaxes(title_text="弯曲应变 (με)")
-        arm_strain_chart.update_xaxes(tickvals=["FBG 1", "FBG 2", "FBG 3"], ticktext=["肩", "肘", "腕"])
-        st.plotly_chart(arm_strain_chart, width="stretch")
-    st.caption("通道对应关系：六路总览的第 1–5 路为拇指至小指综合通道，第 6 路为掌心；细分图第 1–14 路为指节，第 15 路为掌心。青色光纤覆盖肩—肘—腕、两条掌部路线及全部 14 个手指指节；下方指尖接触力、掌心＋五指触觉和手臂弯曲应变柱状图用于对照 FBG 读数判断接触与弯曲。")
-    three_d_record = {
-        "dimension": "三维",
-        "task_phase": task_phase,
-        "is_grasped": bool(three_d_fbg_decision["is_grasped"]),
-        "contact_fingers": [["拇指", "食指", "中指", "无名指", "小指"][index] for index in three_d_fbg_decision["contact_fingers"]],
-        "contact_force_n": np.asarray(three_d_fbg_decision["contact_force_n"], dtype=float).tolist(),
-        "palm_touch_n": float(three_d_fbg_decision["palm_touch_n"]),
-        "wavelength_shifts_nm": np.asarray(three_d_display_shifts, dtype=float).tolist(),
-        "temperature_c": temperature,
-        "noise_nm": noise,
-        "seed": int(seed),
-        "target_position": list(three_d_target_world),
-    }
-    three_d_download_a, three_d_download_b = st.columns(2)
-    three_d_download_a.download_button(
-        "下载三维抓取 FBG 读数 CSV",
-        csv_bytes(["拇指 FBG", "食指 FBG", "中指 FBG", "无名指 FBG", "小指 FBG", "掌心 FBG"], three_d_display_shifts),
-        "three_dimensional_grasp_fbg_readings.csv",
-        "text/csv",
-    )
-    three_d_download_b.download_button(
-        "下载三维抓取实验报告", experiments.grasp_report(three_d_record).encode("utf-8-sig"),
-        "three_dimensional_grasp_report.txt", "text/plain",
-    )
-    st.markdown("#### 重复采样与传感器布置实验")
-    three_d_repeat_samples = st.select_slider(
-        "三维重复采样次数", options=[20, 50, 100, 200], value=50, key="three_d_repeat_samples"
-    )
-    three_d_study = experiments.run_three_d_grasp_noise_study(
-        three_d_sensing, temperature, noise, int(three_d_repeat_samples), (int(seed) + 430) % 2**32
-    )
-    three_d_layouts = experiments.compare_grasp_sensor_layouts(
-        three_d_study["baseline_contact_force_n"],
-        three_d_study["baseline_palm_touch_n"],
-        requires_palm=True,
-    )
-    three_d_stats = st.columns(4)
-    three_d_stats[0].metric("无噪声基准", "抓稳" if three_d_study["baseline_is_grasped"] else "未抓稳")
-    three_d_stats[1].metric("重复采样抓稳率", f"{three_d_study['grasped_rate_percent']:.1f}%")
-    three_d_stats[2].metric("判定一致率", f"{three_d_study['decision_consistency_percent']:.1f}%")
-    three_d_stats[3].metric("判定翻转", f"{three_d_study['decision_flip_count']} 次")
-    st.caption(
-        f"当前 σ={noise:.4f} nm：15 路触觉 FBG 逐次加噪后，五指反演合力 "
-        f"{three_d_study['total_force_mean_n']:.3f} ± {three_d_study['total_force_std_n']:.3f} N；"
-        f"掌心反演力 {three_d_study['palm_force_mean_n']:.3f} ± {three_d_study['palm_force_std_n']:.3f} N。"
-    )
-    st.dataframe(three_d_layouts, hide_index=True, width="stretch")
-    st.caption("三维当前规则同时需要掌心、拇指与其余四指信息；缺少掌心或部分其余手指时会标为无法完整执行判定，无接触力时受力覆盖率记为 0%。")
-    with st.expander("查看三维逐次采样记录", expanded=False):
-        st.dataframe(three_d_study["samples"], hide_index=True, width="stretch")
-    three_d_repeat_a, three_d_repeat_b = st.columns(2)
-    three_d_repeat_a.download_button(
-        "下载三维重复采样 CSV", experiments.grasp_noise_study_csv(three_d_study),
-        "three_dimensional_grasp_repeatability.csv", "text/csv",
-    )
-    three_d_repeat_b.download_button(
-        "下载三维抓取稳健性报告",
-        experiments.grasp_robustness_report("三维", three_d_study, three_d_layouts).encode("utf-8-sig"),
-        "three_dimensional_grasp_robustness_report.txt", "text/plain",
-    )
-    with st.expander("分布式光纤视角（点式 FBG 对比）"):
-        distributed_finger = models.simulate_distributed_sensing(
-            np.asarray(three_d_curls, dtype=float), three_d_fbg_decision["contact_fingers"]
-        )
-        distributed_finger_left, distributed_finger_right = st.columns(2)
-        with distributed_finger_left:
-            st.plotly_chart(
-                visuals.distributed_finger_figure(distributed_finger, three_d_fbg_decision["contact_fingers"]),
-                width="stretch",
+        task_phase = st.session_state.three_d_task_phase
+        controls, display = st.columns([1.15, 2.1], gap="large")
+        with controls:
+            st.markdown("#### 抓取指令")
+            preset_left, preset_right = st.columns(2)
+            preset_left.button(
+                "三维张开手", key="three_d_open", on_click=set_three_d_grasp_pose,
+                args=(False,), width="stretch",
             )
-        with distributed_finger_right:
-            st.plotly_chart(visuals.das_event_figure(distributed_finger), width="stretch")
-        st.caption("同一抓取状态：点式 FBG 输出 14 个指节离散通道；分布式光纤沿五指给出连续应变分布（Rayleigh）和时空振动事件（DAS），接触手指对应的光纤段出现应变峰。")
-    with st.expander("三维传感模型边界"):
-        st.write("这里的接触力来自指尖到圆柱抓取包络的三维距离与屈曲角，作为光纤抓取传感教学模型。它不等同于刚体接触求解、摩擦锥或真实力控，需要结合传感器封装与实验数据标定。")
-    tab_jump_button(4, "下一步 → 结构健康", "structure_navigation", "结构健康")
+            preset_right.button(
+                "三维一键握拳", key="three_d_close", on_click=set_three_d_grasp_pose,
+                args=(True,), width="stretch",
+            )
+            st.button(
+                "恢复三维初始姿态", key="three_d_reset_initial",
+                on_click=reset_three_d_initial_pose, width="stretch",
+            )
+            st.button(
+                "开始三维寻找与抓取任务", key="start_three_d_grasp_task",
+                on_click=start_three_d_grasp_task,
+                disabled=task_phase not in ("未启动", "完成"), width="stretch",
+            )
+            st.button(
+                "执行下一步" if task_phase != "抓取失败" else "重新对准目标",
+                key="advance_three_d_grasp_task", on_click=advance_three_d_grasp_task,
+                disabled=task_phase in ("未启动", "完成"), width="stretch",
+            )
+            st.caption(
+                f"任务状态：{task_phase}。寻找目标 → 对准 → FBG 抓取验证 → 搬运 → 松开放置。"
+            )
+            with st.expander("高级姿态与目标参数", expanded=False):
+                st.caption("用于手动实验；自动任务可直接使用上方指令。拇指含 2 个关节，其余手指各含 3 个关节。")
+                st.markdown("##### 手臂姿态")
+                arm_a, arm_b, arm_c = st.columns(3)
+                with arm_a:
+                    three_d_shoulder = st.slider("三维肩关节 (°)", -20.0, 100.0, step=1.0, key="three_d_shoulder")
+                with arm_b:
+                    three_d_elbow = st.slider("三维肘关节 (°)", -100.0, 40.0, step=1.0, key="three_d_elbow")
+                with arm_c:
+                    three_d_wrist = st.slider("三维腕关节 (°)", -70.0, 70.0, step=1.0, key="three_d_wrist")
+                st.markdown("##### 手指关节")
+                finger_a, finger_b = st.columns(2)
+                with finger_a:
+                    three_d_thumb_mcp = st.slider("拇指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_thumb_mcp")
+                    three_d_thumb_ip = st.slider("拇指 IP (°)", 0.0, 110.0, step=1.0, key="three_d_thumb_ip")
+                    three_d_index_mcp = st.slider("食指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_index_mcp")
+                    three_d_index_pip = st.slider("食指 PIP (°)", 0.0, 110.0, step=1.0, key="three_d_index_pip")
+                    three_d_index_dip = st.slider("食指 DIP (°)", 0.0, 110.0, step=1.0, key="three_d_index_dip")
+                    three_d_middle_mcp = st.slider("中指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_middle_mcp")
+                    three_d_middle_pip = st.slider("中指 PIP (°)", 0.0, 110.0, step=1.0, key="three_d_middle_pip")
+                with finger_b:
+                    three_d_middle_dip = st.slider("中指 DIP (°)", 0.0, 110.0, step=1.0, key="three_d_middle_dip")
+                    three_d_ring_mcp = st.slider("无名指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_ring_mcp")
+                    three_d_ring_pip = st.slider("无名指 PIP (°)", 0.0, 110.0, step=1.0, key="three_d_ring_pip")
+                    three_d_ring_dip = st.slider("无名指 DIP (°)", 0.0, 110.0, step=1.0, key="three_d_ring_dip")
+                    three_d_little_mcp = st.slider("小指 MCP (°)", 0.0, 110.0, step=1.0, key="three_d_little_mcp")
+                    three_d_little_pip = st.slider("小指 PIP (°)", 0.0, 110.0, step=1.0, key="three_d_little_pip")
+                    three_d_little_dip = st.slider("小指 DIP (°)", 0.0, 110.0, step=1.0, key="three_d_little_dip")
+                st.markdown("##### 物体世界坐标")
+                can_a, can_b, can_c = st.columns(3)
+                with can_a:
+                    three_d_can_x = st.slider("物体 X 位置", -3.0, 3.0, step=0.1, key="three_d_can_x")
+                with can_b:
+                    three_d_can_y = st.slider("物体 Y 位置", -3.0, 3.0, step=0.1, key="three_d_can_y")
+                with can_c:
+                    three_d_can_z = st.slider("物体 Z 位置", -3.0, 3.0, step=0.1, key="three_d_can_z")
+
+        three_d_joints = (three_d_shoulder, three_d_elbow, three_d_wrist)
+        three_d_finger_joints = (
+            (three_d_thumb_mcp, three_d_thumb_ip),
+            (three_d_index_mcp, three_d_index_pip, three_d_index_dip),
+            (three_d_middle_mcp, three_d_middle_pip, three_d_middle_dip),
+            (three_d_ring_mcp, three_d_ring_pip, three_d_ring_dip),
+            (three_d_little_mcp, three_d_little_pip, three_d_little_dip),
+        )
+        three_d_curls = tuple(float(np.mean(angles)) for angles in three_d_finger_joints)
+        three_d_target_world = (three_d_can_x, three_d_can_y, three_d_can_z)
+        three_d_hand_reach = tuple(st.session_state[key] for key in ("three_d_reach_x", "three_d_reach_y", "three_d_reach_z"))
+        three_d_can_offset = models.relative_3d_target_offset(three_d_target_world, three_d_hand_reach)
+        three_d_sensing = models.evaluate_3d_grasp_sensing(
+            three_d_curls, three_d_can_offset, temperature,
+            arm_joint_angles_deg=three_d_joints,
+            finger_joint_angles_deg=three_d_finger_joints,
+        )
+        three_d_fbg_decision = models.classify_3d_grasp_from_fbg(three_d_sensing, temperature)
+        three_d_render_finger_joints = three_d_sensing["collision_limited_joint_angles_deg"]
+        three_d_shifts = models.add_gaussian_noise(three_d_sensing["fbg_shifts_nm"], noise, int(seed) + 300)
+        three_d_palm_shift = models.add_gaussian_noise(
+            np.asarray([three_d_sensing["tactile_fbg_shifts_nm"][-1]]), noise, int(seed) + 301
+        )
+        three_d_display_shifts = np.r_[three_d_shifts, three_d_palm_shift]
+
+        grasp_calibration = models.THREE_D_GRASP_CALIBRATION
+        grasp_contacts = three_d_fbg_decision["contact_fingers"]
+        other_contacts = len([index for index in grasp_contacts if index != 0])
+        grasp_conditions = [
+            ("掌心支撑", float(three_d_fbg_decision["palm_touch_n"]) >= grasp_calibration.palm_contact_threshold_n,
+             f"{three_d_fbg_decision['palm_touch_n']:.3f} N", f"≥ {grasp_calibration.palm_contact_threshold_n:g} N"),
+            ("拇指接触", 0 in grasp_contacts,
+             f"{three_d_fbg_decision['contact_force_n'][0]:.3f} N", f"≥ {grasp_calibration.contact_force_threshold_n:g} N"),
+            ("其余手指接触", other_contacts >= 2,
+             f"{other_contacts} 根", f"至少 2 根，每根 ≥ {grasp_calibration.contact_force_threshold_n:g} N"),
+        ]
+        with display:
+            st.markdown("#### 三维交互视图")
+            if three_d_fbg_decision["is_grasped"]:
+                st.success("FBG 已抓稳：掌心、拇指及至少两根其余手指达到触觉阈值。")
+            else:
+                st.warning("尚未满足：" + "、".join(name for name, passed, _, _ in grasp_conditions if not passed) + "。")
+            embedded_view.render_html(
+                visuals.anthropomorphic_hand_html(
+                    st.session_state.three_d_action,
+                    three_d_joints,
+                    three_d_curls,
+                    bool(three_d_fbg_decision["is_grasped"]),
+                    can_offset=three_d_target_world,
+                    previous_can_offset=st.session_state.three_d_previous_target,
+                    shoulder_offset=three_d_hand_reach,
+                    previous_shoulder_offset=st.session_state.three_d_previous_reach,
+                    finger_curl_gain=1.0,
+                    finger_joint_angles_deg=three_d_render_finger_joints,
+                    previous_joint_angles_deg=st.session_state.three_d_previous_arm_joints,
+                    previous_finger_joint_angles_deg=st.session_state.three_d_previous_finger_joints,
+                    animate=st.session_state.get("smooth_animation", True),
+                ),
+                key="spatial-hand", height=560, title="三维抓取视图",
+            )
+            st.caption("拖动模型可旋转视角；滚轮缩放保持关闭。物体保持世界坐标，寻找程序移动手部抓取包络至目标。")
+            with st.container(key="three_d_grasp_metrics"):
+                three_d_metrics = st.columns(4)
+                three_d_metrics[0].metric("FBG 触觉接触手指", f"{len(three_d_fbg_decision['contact_fingers'])} / 5")
+                three_d_metrics[1].metric("FBG 反演接触合力", f"{np.asarray(three_d_fbg_decision['contact_force_n']).sum():.2f} N")
+                three_d_metrics[2].metric("握持稳定度", f"{float(three_d_sensing['stability']) * 100:.0f}%")
+                three_d_metrics[3].metric("三维抓取状态", "FBG 已抓稳" if three_d_fbg_decision["is_grasped"] else "FBG 未抓稳")
+            with st.container(border=True):
+                st.dataframe([{"判定条件": name, "当前值": value, "要求": threshold, "状态": "已满足" if passed else "未满足"}
+                              for name, passed, value, threshold in grasp_conditions], hide_index=True, width="stretch")
+                st.caption("三个条件全部满足才判定抓稳；读数按显示精度取整，是否达标以未取整的温补结果为准。握持稳定度是独立教学指标，不代替这三个条件。")
+            with st.expander("查看 FBG 路径说明", expanded=False):
+                st.info("青色发光线表示 FBG 封装/走线路径：肩—肘—腕为弯曲监测；掌部两条短线为掌心接触区域；每根手指上的分段线为指节触觉区域。青色只表示传感路径，不表示受力大小；接触后对应路径会变为黄色。")
+                st.caption("先查看物体是否位于手部抓取范围，再调节缺少接触的手指。关节屈曲和柱高本身不能证明抓稳。")
+        st.markdown("#### 拇指结构与测点观察器")
+        st.caption("TH-L1 / TH-L2 对应细分触觉 FBG 01 / 02。局部放大视图使用原手部几何与数据模型。")
+        if st.toggle("打开拇指测点观察器", key="thumb_inspector_enabled"):
+            payload = thumb_inspector.sequence(
+                three_d_finger_joints, tuple(three_d_can_offset), float(temperature), three_d_joints,
+            )
+            embedded_view.render_html(thumb_inspector.inspector_html(payload),
+                                      key="thumb-inspector", title="拇指结构与测点观察器")
+        st.markdown("#### 传感通道对照")
+        inspected_channel = st.selectbox("查看哪个部位的通道", ["拇指", "食指", "中指", "无名指", "小指", "掌心"], key="three_d_inspect_channel")
+        channel_map = {
+            "拇指": (0, [0, 1]), "食指": (1, [2, 3, 4]), "中指": (2, [5, 6, 7]),
+            "无名指": (3, [8, 9, 10]), "小指": (4, [11, 12, 13]), "掌心": (5, [14]),
+        }
+        overview_index, tactile_indices = channel_map[inspected_channel]
+        st.caption(f"{inspected_channel}：总览第 {overview_index + 1} 路；细分 FBG " + "、".join(str(index + 1) for index in tactile_indices) + "。橙色柱仅标记当前查看的通道，不表示故障或达标；选择不会改变模型姿态。")
+        st.caption("六路总览加入了侧栏噪声；细分触觉读数与当前抓稳判定使用未叠加该噪声的模型信号。侧栏噪声不参与当前抓稳判定，不能用本页验证抗噪性能。")
+        three_d_result_chart, three_d_result_notes = st.columns([3, 2])
+        with three_d_result_chart:
+            overview_chart = visuals.sensor_bar_figure(np.arange(1, 7), three_d_display_shifts, "三维抓取：五指与掌心六路 FBG 波长漂移")
+            overview_chart.update_traces(marker_color=[visuals.COLORS["estimate"] if index == overview_index else visuals.COLORS["sensor"] for index in range(6)])
+            st.plotly_chart(overview_chart, width="stretch")
+        with three_d_result_notes:
+            st.markdown("#### 图表结果说明")
+            st.markdown(
+                "- **第 1–5 路**：拇指至小指的综合弯曲／接触通道。\n"
+                "- **第 6 路**：掌心接触通道；它与五指通道分开显示，不等同于任一手指。\n"
+                "- **柱高**：当前温度、噪声、关节屈曲与接触状态共同作用后的波长漂移。\n"
+                "- **抓稳判定**：温度补偿后，掌心、拇指和至少两根其余手指的触觉条件共同满足时，才显示“FBG 已抓稳”。\n"
+                "- **阅读顺序**：先看六路柱状分布，再对照下方指尖接触力、细分指节／掌心通道和稳定度。"
+            )
+        force_chart = visuals.sensor_bar_figure(np.arange(1, 6), three_d_sensing["contact_force_n"], "三维指尖接触力 (N)")
+        force_chart.update_yaxes(title_text="接触力 (N)")
+        force_chart.update_xaxes(tickvals=[f"FBG {i}" for i in range(1, 6)], ticktext=["拇指", "食指", "中指", "无名指", "小指"])
+        st.plotly_chart(force_chart, width="stretch")
+        tactile_chart = visuals.sensor_bar_figure(np.arange(1, 16), three_d_sensing["tactile_fbg_shifts_nm"], "细分触觉 FBG：14 个指节＋第 15 路掌心")
+        tactile_chart.update_traces(marker_color=[visuals.COLORS["estimate"] if index in tactile_indices else visuals.COLORS["sensor"] for index in range(15)])
+        st.plotly_chart(tactile_chart, width="stretch")
+        tactile_left, tactile_right = st.columns(2)
+        with tactile_left:
+            palm_finger_chart = visuals.sensor_bar_figure(np.arange(1, 7), np.r_[three_d_sensing["palm_touch_n"], three_d_sensing["contact_force_n"]], "手掌与五指触觉 (N)")
+            palm_finger_chart.update_yaxes(title_text="接触力 (N)")
+            palm_finger_chart.update_xaxes(tickvals=[f"FBG {i}" for i in range(1, 7)], ticktext=["掌心", "拇指", "食指", "中指", "无名指", "小指"])
+            st.plotly_chart(palm_finger_chart, width="stretch")
+        with tactile_right:
+            arm_strain_chart = visuals.sensor_bar_figure(np.arange(1, 4), three_d_sensing["arm_bend_strain_ue"], "肩、肘、腕 FBG 弯曲应变 (με)")
+            arm_strain_chart.update_yaxes(title_text="弯曲应变 (με)")
+            arm_strain_chart.update_xaxes(tickvals=["FBG 1", "FBG 2", "FBG 3"], ticktext=["肩", "肘", "腕"])
+            st.plotly_chart(arm_strain_chart, width="stretch")
+        st.caption("通道对应关系：六路总览的第 1–5 路为拇指至小指综合通道，第 6 路为掌心；细分图第 1–14 路为指节，第 15 路为掌心。青色光纤覆盖肩—肘—腕、两条掌部路线及全部 14 个手指指节；下方指尖接触力、掌心＋五指触觉和手臂弯曲应变柱状图用于对照 FBG 读数判断接触与弯曲。")
+        three_d_record = {
+            "dimension": "三维",
+            "task_phase": task_phase,
+            "is_grasped": bool(three_d_fbg_decision["is_grasped"]),
+            "contact_fingers": [["拇指", "食指", "中指", "无名指", "小指"][index] for index in three_d_fbg_decision["contact_fingers"]],
+            "contact_force_n": np.asarray(three_d_fbg_decision["contact_force_n"], dtype=float).tolist(),
+            "palm_touch_n": float(three_d_fbg_decision["palm_touch_n"]),
+            "wavelength_shifts_nm": np.asarray(three_d_display_shifts, dtype=float).tolist(),
+            "temperature_c": temperature,
+            "noise_nm": noise,
+            "seed": int(seed),
+            "target_position": list(three_d_target_world),
+        }
+        export_heading("three-d")
+        three_d_download_a, three_d_download_b = st.columns(2)
+        three_d_download_a.download_button(
+            "下载三维抓取 FBG 读数 CSV",
+            csv_bytes(["拇指 FBG", "食指 FBG", "中指 FBG", "无名指 FBG", "小指 FBG", "掌心 FBG"], three_d_display_shifts),
+            "three_dimensional_grasp_fbg_readings.csv",
+            "text/csv",
+        )
+        three_d_download_b.download_button(
+            "下载三维抓取实验报告", experiments.grasp_report(three_d_record).encode("utf-8-sig"),
+            "three_dimensional_grasp_report.txt", "text/plain",
+        )
+        with st.expander("进阶：三维重复采样与模型说明", expanded=False):
+            st.markdown("#### 重复采样与传感器布置实验")
+            three_d_repeat_samples = st.select_slider(
+                "三维重复采样次数", options=[20, 50, 100, 200], value=50, key="three_d_repeat_samples"
+            )
+            three_d_study = experiments.run_three_d_grasp_noise_study(
+                three_d_sensing, temperature, noise, int(three_d_repeat_samples), (int(seed) + 430) % 2**32
+            )
+            three_d_layouts = experiments.compare_grasp_sensor_layouts(
+                three_d_study["baseline_contact_force_n"],
+                three_d_study["baseline_palm_touch_n"],
+                requires_palm=True,
+            )
+            three_d_stats = st.columns(4)
+            three_d_stats[0].metric("无噪声基准", "抓稳" if three_d_study["baseline_is_grasped"] else "未抓稳")
+            three_d_stats[1].metric("重复采样抓稳率", f"{three_d_study['grasped_rate_percent']:.1f}%")
+            three_d_stats[2].metric("判定一致率", f"{three_d_study['decision_consistency_percent']:.1f}%")
+            three_d_stats[3].metric("判定翻转", f"{three_d_study['decision_flip_count']} 次")
+            st.caption(
+                f"当前 σ={noise:.4f} nm：15 路触觉 FBG 逐次加噪后，五指反演合力 "
+                f"{three_d_study['total_force_mean_n']:.3f} ± {three_d_study['total_force_std_n']:.3f} N；"
+                f"掌心反演力 {three_d_study['palm_force_mean_n']:.3f} ± {three_d_study['palm_force_std_n']:.3f} N。"
+            )
+            st.dataframe(three_d_layouts, hide_index=True, width="stretch")
+            st.caption("三维当前规则同时需要掌心、拇指与其余四指信息；缺少掌心或部分其余手指时会标为无法完整执行判定，无接触力时受力覆盖率记为 0%。")
+            with st.expander("查看三维逐次采样记录", expanded=False):
+                st.dataframe(three_d_study["samples"], hide_index=True, width="stretch")
+            three_d_repeat_a, three_d_repeat_b = st.columns(2)
+            three_d_repeat_a.download_button(
+                "下载三维重复采样 CSV", experiments.grasp_noise_study_csv(three_d_study),
+                "three_dimensional_grasp_repeatability.csv", "text/csv",
+            )
+            three_d_repeat_b.download_button(
+                "下载三维抓取稳健性报告",
+                experiments.grasp_robustness_report("三维", three_d_study, three_d_layouts).encode("utf-8-sig"),
+                "three_dimensional_grasp_robustness_report.txt", "text/plain",
+            )
+            with st.expander("分布式光纤视角（点式 FBG 对比）"):
+                distributed_finger = models.simulate_distributed_sensing(
+                    np.asarray(three_d_curls, dtype=float), three_d_fbg_decision["contact_fingers"]
+                )
+                distributed_finger_left, distributed_finger_right = st.columns(2)
+                with distributed_finger_left:
+                    st.plotly_chart(
+                        visuals.distributed_finger_figure(distributed_finger, three_d_fbg_decision["contact_fingers"]),
+                        width="stretch",
+                    )
+                with distributed_finger_right:
+                    st.plotly_chart(visuals.das_event_figure(distributed_finger), width="stretch")
+                st.caption("同一抓取状态：点式 FBG 输出 14 个指节离散通道；分布式光纤沿五指给出连续应变分布（Rayleigh）和时空振动事件（DAS），接触手指对应的光纤段出现应变峰。")
+            with st.expander("三维传感模型边界"):
+                st.write("这里的接触力来自指尖到圆柱抓取包络的三维距离与屈曲角，作为光纤抓取传感教学模型。它不等同于刚体接触求解、摩擦锥或真实力控，需要结合传感器封装与实验数据标定。")
+        st.session_state["current_grasp_is_grasped"] = bool(three_d_fbg_decision["is_grasped"])
+        if st.button("下一步 → 结构健康", key="tab_jump_4_下一步 → 结构健康", use_container_width=True):
+            select_main_tab(LAB_LABELS[4], "structure_navigation", "结构健康")
+            st.rerun(scope="app")
+
+    render_spatial_grasp()
 
 with shape_tab:
     st.subheader("三芯光纤的连续体机器人 3D 形状重建")
-    shape_demo_slot = st.container()
+    experiment_shortcuts("shape")
     module_learning_frame(
-        "理解三芯差分波长如何反演曲率与弯曲方向，并量化整条中心线误差。",
-        "先载入理想恒曲率并保存基线 A，再比较已知扭转先验、波长噪声或芯间温差场景。",
-        "同时查看曲率误差、方向误差、中心线 RMSE 和末端误差，不只判断两条曲线是否重合。",
-        "采用恒曲率教学模型；扭转率是已知重建先验，并非由当前三芯波长读数估计。",
+        '理解三芯差分波长如何反演曲率与弯曲方向，并量化整条中心线误差。',
+        '先保持默认条件，只改变曲率，再改变弯曲方向；观察真实形状与重建形状的差别。',
+        '同时查看曲率误差、方向误差、中心线 RMSE 和末端误差，不只判断两条曲线是否重合。',
+        '采用恒曲率教学模型；扭转率是已知重建先验，并非由当前三芯波长读数估计。',
     )
+    shape_demo_slot = st.container()
     for key, value in (
         ("shape_curvature", 8.0), ("shape_direction", 35.0),
         ("shape_twist", 0.0), ("shape_length", 150.0),
@@ -1927,7 +2059,7 @@ with shape_tab:
         "core_temperature_gradient_c": core_temperature_gradient, "seed": int(seed),
     })
     with shape_demo_slot:
-        demo_views.render_demo("shape", shape_record["parameters"])
+        demo_views.render_demo("shape", {**shape_record["parameters"], "inspection_node": st.session_state.get("shape_inspect_node", 80)})
     shape_results = shape_record["results"]
     shape = {
         "core_angles_deg": np.asarray(shape_results["core_angles_deg"]),
@@ -1953,6 +2085,9 @@ with shape_tab:
         st.warning(f"芯间温度梯度 {core_temperature_gradient:+.1f} °C/芯：差分应变只能消除共模温度，芯间温差会让反演曲率/方向偏离真实值。")
     st.plotly_chart(visuals.sensor_bar_figure(shape["core_angles_deg"], shape["wavelength_shifts_nm"], "三根纤芯的波长漂移"), width="stretch")
     st.caption("三维图实线为真实中心线、虚线为反演中心线；中心线 RMSE 汇总整条曲线的逐点空间误差，末端误差只看最后一个点。柱状图是三芯波长漂移，芯间差异决定弯曲方向；扭转率作为已知先验参与中心线重建。")
+    demo_views.inspector_navigation("shape")
+    shape_inspector.render(shape_record)
+    export_heading("shape")
     st.download_button("下载当前多芯光纤读数 CSV", csv_bytes(["Core 1", "Core 2", "Core 3"], shape["wavelength_shifts_nm"]), "multicore_fbg_readings.csv", "text/csv")
     if st.button("保存当前为形状基线 A", key="save_shape_baseline"):
         st.session_state.shape_baseline = shape_record
@@ -1996,13 +2131,14 @@ with shape_tab:
 
 with health_tab:
     st.subheader("机械臂结构健康监测：点式 FBG 阵列局部异常定位")
-    health_demo_slot = st.container()
+    experiment_shortcuts("health")
     module_learning_frame(
-        "区分‘检测到异常’与‘异常定位准确’，并理解阵列密度对定位区间的影响。",
-        "先载入健康基线，再载入局部异常；分别比较稀疏与高密度阵列。",
-        "核对真实异常位置、可疑位置、定位误差、定位区间和检测是否符合设定。",
-        "‘需检查’是教学阈值触发，不是裂纹确认、寿命预测或结构安全结论。",
+        '区分‘检测到异常’与‘异常定位准确’，并理解阵列密度对定位区间的影响。',
+        '先载入正常场景，再增加异常程度并移动异常位置；观察传感点能否定位异常。',
+        '核对真实异常位置、可疑位置、定位误差、定位区间和检测是否符合设定。',
+        '‘需检查’是教学阈值触发，不是裂纹确认、寿命预测或结构安全结论。',
     )
+    health_demo_slot = st.container()
     for key, value in (
         ("arm_load", 80.0), ("anomaly_position", 320.0),
         ("anomaly_severity", 0.0), ("arm_fbg_count", 6),
@@ -2037,7 +2173,7 @@ with health_tab:
         "temperature_c": temperature, "noise_nm": noise, "seed": int(seed),
     })
     with health_demo_slot:
-        demo_views.render_demo("health", health_record["parameters"])
+        demo_views.render_demo("health", {**health_record["parameters"], "inspection_channel": st.session_state.get("health_inspect_channel", 0)})
     health_results = health_record["results"]
     sensor_positions = np.asarray(health_results["sensor_positions_mm"], dtype=float)
     arm_health = {
@@ -2092,6 +2228,9 @@ with health_tab:
     st.button("重置本页演示参数", key="reset_arm_health", on_click=reset_arm_health_demo)
     st.plotly_chart(visuals.sensor_bar_figure(arm_health["sensor_positions_mm"], arm_health["wavelength_shifts_nm"], f"机械臂 {fbg_count} 路 FBG 波长漂移"), width="stretch")
     st.caption("“需检查”表示局部差分应变超过本教学模型阈值，不等同于真实裂纹结论；定位误差比较可疑位置与仿真真值，± 区间约为 FBG 间距的一半。真实结构健康监测还需健康基线、载荷工况、温度场和无损检测交叉验证。")
+    demo_views.inspector_navigation("health")
+    health_inspector.render(health_record)
+    export_heading("health")
     if st.button("保存当前为健康基线 A", key="save_health_baseline"):
         st.session_state.health_baseline = health_record
     health_baseline = st.session_state.get("health_baseline")
@@ -2152,6 +2291,13 @@ with health_tab:
 
 with distributed_tab:
     st.subheader("分布式光纤感知：连续空间上的应变、振动与温度")
+    experiment_shortcuts("distributed")
+    module_learning_frame(
+        '比较四种分布式观测机制。',
+        '载入 Rayleigh 局部应变场景，再移动事件位置；之后改变空间采样间隔比较定位。',
+        '比较真实位置、定位结果与采样误差。',
+        '四类教学解析模型，不代表设备带宽或空间分辨率指标。',
+    )
     distributed_demo_slot = st.container()
     st.caption("本页以四类教学解析模型对比不同散射机制的观测量：Rayleigh/OFDR 连续应变、φ-OTDR/DAS 振动事件、Brillouin 频移、Raman 分布式温度。")
     distributed_widget_keys = {
@@ -2200,7 +2346,7 @@ with distributed_tab:
     }
     distributed_record = experiments.run_distributed_experiment(distributed_parameters)
     with distributed_demo_slot:
-        demo_views.render_demo("distributed", distributed_parameters)
+        demo_views.render_demo("distributed", {**distributed_parameters, "inspection_index": st.session_state.get("distributed_inspect_index", 0)})
     distributed_result, distributed_frame = models.simulate_distributed_mechanism(
         distributed_mode, fiber_length, event_position, event_strength, int(sample_rate)
     )
@@ -2256,6 +2402,9 @@ with distributed_tab:
         ):
             st.session_state[key] = value
     st.button("重置本页演示参数", key="reset_distributed", on_click=reset_distributed_demo)
+    demo_views.inspector_navigation("distributed")
+    distributed_inspector.render(distributed_record, distributed_result)
+    export_heading("distributed")
     if st.button("保存当前为分布式基线 A", key="save_distributed_baseline"):
         st.session_state.distributed_baseline = distributed_record
     distributed_baseline = st.session_state.get("distributed_baseline")
@@ -2322,109 +2471,112 @@ with distributed_tab:
 
 with fbg_simplus_tab:
     st.subheader("FBG-SimPlus 兼容：通用八列数据适配")
+    experiment_shortcuts("data")
     st.caption("本页读取 FBG-SimPlus 所需的八列数值数据并进行标准化；不要求特定仿真软件，不包含、复制、执行或修改 FBG-SimPlus 源代码，也不在本网站生成其反射谱。")
     module_learning_frame(
-        "识别通用八列输入的列顺序、分隔符、表头跳过规则和位置递增要求。",
-        "依次载入标准文本、带表头 CSV、列数不足和位置重复练习，比较通过与拒绝原因。",
-        "记录采样跨度、最小/最大间隔、间隔变异以及八列数值范围。",
-        "本页只判断文本结构和数值条件，不判断单位、材料参数、FEM 模型或反射谱是否正确。",
+        '识别通用八列输入的列顺序、分隔符、表头跳过规则和位置递增要求。',
+        '没有自己的文件也能开始：载入标准八列示例，查看格式检查结果，再下载标准化文本。',
+        '记录采样跨度、最小/最大间隔、间隔变异以及八列数值范围。',
+        '本页只判断文本结构和数值条件，不判断单位、材料参数、FEM 模型或反射谱是否正确。',
+        has_baseline=False,
     )
-    st.markdown(
-        "**出处与许可：** [FBG-SimPlus V1.0（Ben Frey 等）](https://github.com/benfrey/FBG-SimPlus) "
-        "采用 [GNU GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)。本网站仅做独立的数据格式兼容；"
-        "请从原仓库获取并独立运行该软件。"
-    )
-    st.markdown(
-        "**请引用：** Frey, B., Snyder, P., Ziock, K., & Passian, A. (2021). "
-        "*Semicomputational calculation of Bragg shift in stratified materials*. "
-        "Physical Review E, 104(5), 055307."
-    )
-    st.markdown("""
-**可输入并处理：**
+    with st.container(border=True):
+        st.markdown(
+            "**出处与许可：** [FBG-SimPlus V1.0（Ben Frey 等）](https://github.com/benfrey/FBG-SimPlus) "
+            "采用 [GNU GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)。本网站仅做独立的数据格式兼容；"
+            "请从原仓库获取并独立运行该软件。"
+        )
+        st.markdown(
+            "**请引用：** Frey, B., Snyder, P., Ziock, K., & Passian, A. (2021). "
+            "*Semicomputational calculation of Bragg shift in stratified materials*. "
+            "Physical Review E, 104(5), 055307."
+        )
+        st.markdown("""
+    **可输入并处理：**
 
-- **空白分隔 `.txt` / `.dat`**：若已是八列数值，可直接上传并下载标准化版本；
-- **逗号分隔 `.csv`** 或 **制表符文本**：选择相应分隔符、跳过表头行后上传；网站会转换为 FBG-SimPlus 读取的空白分隔文本；
-- **任意 FEM 或自定义脚本的路径数据**：只要导出为上述文本形式且列含义一致即可；来源可以是任意仿真软件或实验预处理脚本。
+    - **空白分隔 `.txt` / `.dat`**：若已是八列数值，可直接上传并下载标准化版本；
+    - **逗号分隔 `.csv`** 或 **制表符文本**：选择相应分隔符、跳过表头行后上传；网站会转换为 FBG-SimPlus 读取的空白分隔文本；
+    - **任意 FEM 或自定义脚本的路径数据**：只要导出为上述文本形式且列含义一致即可；来源可以是任意仿真软件或实验预处理脚本。
 
-**不能直接输入：** Excel `.xlsx`、原生模型文件（例如 `.mph`、`.odb`、`.rst`）和图像/PDF。请先在原软件或表格软件中导出为 CSV、制表符或空白分隔文本，再在本页处理。
+    **不能直接输入：** Excel `.xlsx`、原生模型文件（例如 `.mph`、`.odb`、`.rst`）和图像/PDF。请先在原软件或表格软件中导出为 CSV、制表符或空白分隔文本，再在本页处理。
 
-固定八列依次为：`位置`、`εxx`、`εyy`、`εzz`、`σxx`、`σyy`、`σzz`、`温度`。位置统一使用 m 或 mm；三个应变无量纲；三个正应力为 Pa；温度为 K。
-""")
-    with st.expander("完整安装与使用说明（在本机独立运行 FBG-SimPlus）", expanded=False):
-        st.markdown(r"""
-### 1. 下载原项目
+    固定八列依次为：`位置`、`εxx`、`εyy`、`εzz`、`σxx`、`σyy`、`σzz`、`温度`。位置统一使用 m 或 mm；三个应变无量纲；三个正应力为 Pa；温度为 K。
+    """)
+        with st.expander("完整安装与使用说明（在本机独立运行 FBG-SimPlus）", expanded=False):
+            st.markdown(r"""
+    ### 1. 下载原项目
 
-请从原作者仓库获取完整程序、许可证与教程。Windows 与 macOS/Linux 的命令分别如下。
+    请从原作者仓库获取完整程序、许可证与教程。Windows 与 macOS/Linux 的命令分别如下。
 
-#### Windows（PowerShell）
+    #### Windows（PowerShell）
 
-```powershell
-git clone https://github.com/benfrey/FBG-SimPlus.git
-cd FBG-SimPlus
-```
+    ```powershell
+    git clone https://github.com/benfrey/FBG-SimPlus.git
+    cd FBG-SimPlus
+    ```
 
-#### macOS / Linux（Terminal / Bash）
+    #### macOS / Linux（Terminal / Bash）
 
-```bash
-git clone https://github.com/benfrey/FBG-SimPlus.git
-cd FBG-SimPlus
-```
+    ```bash
+    git clone https://github.com/benfrey/FBG-SimPlus.git
+    cd FBG-SimPlus
+    ```
 
-也可在原仓库选择 **Code → Download ZIP**，解压后进入 `FBG-SimPlus` 目录。本网站不提供其源码或安装包。
+    也可在原仓库选择 **Code → Download ZIP**，解压后进入 `FBG-SimPlus` 目录。本网站不提供其源码或安装包。
 
-### 2. 配置独立 Python 环境
+    ### 2. 配置独立 Python 环境
 
-FBG-SimPlus README 指定 Python 3.8。不要复用本网站的 Python 环境。
+    FBG-SimPlus README 指定 Python 3.8。不要复用本网站的 Python 环境。
 
-#### Windows（PowerShell）
+    #### Windows（PowerShell）
 
-确认已安装 Python 3.8 后，在 `FBG-SimPlus` 根目录复制执行：
+    确认已安装 Python 3.8 后，在 `FBG-SimPlus` 根目录复制执行：
 
-```powershell
-py -3.8 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install PyQt5 scipy matplotlib sympy six numpy
-cd python
-python run.py
-```
+    ```powershell
+    py -3.8 -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    python -m pip install --upgrade pip
+    python -m pip install PyQt5 scipy matplotlib sympy six numpy
+    cd python
+    python run.py
+    ```
 
-若 PowerShell 禁止激活脚本，可仅对当前用户执行一次 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`，再重新执行激活命令。
+    若 PowerShell 禁止激活脚本，可仅对当前用户执行一次 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`，再重新执行激活命令。
 
-#### macOS / Linux（Terminal / Bash）
+    #### macOS / Linux（Terminal / Bash）
 
-确认已安装 Python 3.8 后，在 `FBG-SimPlus` 根目录复制执行：
+    确认已安装 Python 3.8 后，在 `FBG-SimPlus` 根目录复制执行：
 
-```bash
-python3.8 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install PyQt5 scipy matplotlib sympy six numpy
-cd python
-python run.py
-```
+    ```bash
+    python3.8 -m venv .venv
+    source .venv/bin/activate
+    python -m pip install --upgrade pip
+    python -m pip install PyQt5 scipy matplotlib sympy six numpy
+    cd python
+    python run.py
+    ```
 
-若找不到 Windows 的 `py -3.8`，或 macOS/Linux 的 `python3.8`，请先安装 Python 3.8。该原项目以 Python 3.8 为目标；更高版本的兼容性不在此页保证。
+    若找不到 Windows 的 `py -3.8`，或 macOS/Linux 的 `python3.8`，请先安装 Python 3.8。该原项目以 Python 3.8 为目标；更高版本的兼容性不在此页保证。
 
-### 3. 准备并检查通用八列输入
+    ### 3. 准备并检查通用八列输入
 
-从任意 FEM 软件、实验预处理脚本或表格软件导出数据。数据必须按如下顺序给出：位置、`εxx`、`εyy`、`εzz`、`σxx`、`σyy`、`σzz`、温度。支持空白分隔 `.txt/.dat`、CSV 与制表符文本；通过本页将其标准化为 FBG-SimPlus 所需的空白分隔八列 `.txt`。
+    从任意 FEM 软件、实验预处理脚本或表格软件导出数据。数据必须按如下顺序给出：位置、`εxx`、`εyy`、`εzz`、`σxx`、`σyy`、`σzz`、温度。支持空白分隔 `.txt/.dat`、CSV 与制表符文本；通过本页将其标准化为 FBG-SimPlus 所需的空白分隔八列 `.txt`。
 
-先用本页的模板和上传框预检。预检仅检查八列、数值有效性和位置递增性，不替代 FEM 建模、材料参数或 FBG 标定验证。
+    先用本页的模板和上传框预检。预检仅检查八列、数值有效性和位置递增性，不替代 FEM 建模、材料参数或 FBG 标定验证。
 
-### 4. 在应用内生成光谱
+    ### 4. 在应用内生成光谱
 
-1. 在 **Select Stressed/Strained Path Files** 区域点击 **Add Files**，选中导出的 `.txt`。
-2. 设置 **Skip Rows** 为文件开头元数据和表头的行数。原仓库教程 `tutorial/tut-export.txt` 的 `%` 开头元数据共有 7 行，教程文件填 `7`；你的文件按实际行数填写。
-3. 在 **Path Distance Input Units** 选择第一列实际单位 `[m]` 或 `[mm]`。
-4. 设置 FBG 数量、每个 FBG 的路径位置、FBG 长度和初始 Bragg 波长；位置单位必须与第 3 步一致。
-5. 按你的模型设置均匀/非均匀应变、温度模拟、宿主热膨胀系数及其他光学参数。示例参数不等同于真实实验标定值。
-6. 点击 **Generate** 计算模拟结果，点击 **Plot** 查看反射谱；完整参数含义请查阅原仓库的 `documentation.pdf` 和 `tutorial/`。
+    1. 在 **Select Stressed/Strained Path Files** 区域点击 **Add Files**，选中导出的 `.txt`。
+    2. 设置 **Skip Rows** 为文件开头元数据和表头的行数。原仓库教程 `tutorial/tut-export.txt` 的 `%` 开头元数据共有 7 行，教程文件填 `7`；你的文件按实际行数填写。
+    3. 在 **Path Distance Input Units** 选择第一列实际单位 `[m]` 或 `[mm]`。
+    4. 设置 FBG 数量、每个 FBG 的路径位置、FBG 长度和初始 Bragg 波长；位置单位必须与第 3 步一致。
+    5. 按你的模型设置均匀/非均匀应变、温度模拟、宿主热膨胀系数及其他光学参数。示例参数不等同于真实实验标定值。
+    6. 点击 **Generate** 计算模拟结果，点击 **Plot** 查看反射谱；完整参数含义请查阅原仓库的 `documentation.pdf` 和 `tutorial/`。
 
-### 5. 已知限制与署名
+    ### 5. 已知限制与署名
 
-原作者已说明：谱图绘制可能不稳定、macOS 退出时可能需要强制结束、图片保存可能不稳定。使用该软件的方法或结果时，请保留本页顶部的 Frey 等人论文引用、原项目链接与 GPL-3.0 许可说明。
-""")
+    原作者已说明：谱图绘制可能不稳定、macOS 退出时可能需要强制结束、图片保存可能不稳定。使用该软件的方法或结果时，请保留本页顶部的 Frey 等人论文引用、原项目链接与 GPL-3.0 许可说明。
+    """)
     def load_fbg_simplus_example() -> None:
         example = FBG_SIMPLUS_EXAMPLES[st.session_state.fbg_simplus_example]
         st.session_state.fbg_simplus_use_example = True
@@ -2471,6 +2623,7 @@ python run.py
         source_delimiter = selected_example["delimiter"]
         source_skip_rows = int(selected_example["skip_rows"])
         source_label = "内置示例"
+    export_heading("data")
     if source_text is not None:
         try:
             parsed_export = models.parse_fbg_simplus_comsol_export(
@@ -2488,7 +2641,7 @@ python run.py
             quality_b.metric("最小采样间隔", f"{quality_summary['minimum_spacing_mm']:.3f} mm")
             quality_c.metric("最大采样间隔", f"{quality_summary['maximum_spacing_mm']:.3f} mm")
             quality_d.metric("采样间隔变异", f"{quality_summary['spacing_cv_percent']:.2f}%")
-            with st.expander("查看八列数值范围", expanded=True):
+            with st.expander("查看八列数值范围", expanded=False):
                 column_ranges = quality_summary["column_ranges"]
                 st.dataframe({
                     "列与约定单位": list(column_ranges),
@@ -2502,13 +2655,14 @@ python run.py
 
 with polarization_tab:
     st.subheader("偏振与干涉传感：偏振态、旋转与微腔光程差")
-    optical_demo_slot = st.container()
+    experiment_shortcuts("optical")
     module_learning_frame(
-        "区分偏振 Stokes 状态、Sagnac 旋转相位和 EFPI 微腔长度三类光学观测量。",
-        "先载入偏振基线，再分别比较横向应力、光纤扭转、温度交叉敏感和旋转压力场景。",
-        "记录 S1/S2/S3、方位角、椭圆率、Sagnac 相位差、EFPI 腔长变化及温度偏移。",
-        "三部分是彼此独立的解析教学模型，不代表实际器件的解调精度、交叉敏感性或量程。",
+        '区分偏振 Stokes 状态、Sagnac 旋转相位和 EFPI 微腔长度三类光学观测量。',
+        '先载入推荐场景，只改变应力或扭转中的一个参数，观察偏振态和对应指标。',
+        '记录 S1/S2/S3、方位角、椭圆率、Sagnac 相位差、EFPI 腔长变化及温度偏移。',
+        '三部分是彼此独立的解析教学模型，不代表实际器件的解调精度、交叉敏感性或量程。',
     )
+    optical_demo_slot = st.container()
     for key, value in (
         ("optical_stress", 120.0), ("optical_twist", 35.0),
         ("optical_gyro_rate", 45.0), ("optical_pressure", 0.4),
@@ -2565,6 +2719,7 @@ with polarization_tab:
     optical_b.metric("EFPI 腔长变化", f"{optical_results['cavity_change_nm']:+.1f} nm")
     optical_c.metric("温度引起的椭圆率偏移", f"{optical_results['temperature_ellipticity_offset_deg']:+.2f} °")
     st.caption("偏振态模块用于理解双折射、扭转与温度对 Stokes 参数的影响；Sagnac 相位正负号表示旋转方向，EFPI 展示腔长干涉。均为教学模型，不代表惯导或压力传感器精度。")
+    export_heading("optical")
     if st.button("保存当前为光学基线 A", key="save_optical_baseline"):
         st.session_state.optical_baseline = optical_record
     optical_baseline = st.session_state.get("optical_baseline")
@@ -2588,7 +2743,7 @@ with polarization_tab:
                 f"{optical_results['cavity_change_nm']:+.2f} nm",
             ],
         }, hide_index=True, width="stretch")
-    with st.expander("机制响应曲线与可辨识性", expanded=True):
+    with st.expander("机制响应曲线与可辨识性", expanded=False):
         st.plotly_chart(visuals.optical_response_scan_figure(120.0, cavity_length), width="stretch")
         st.markdown(
             "| 机制 | 独立输入 | 直接观测量 | 本页可验证关系 |\n"
@@ -2613,11 +2768,12 @@ with polarization_tab:
 
 with chain_tab:
     st.subheader("解调器与实时数据链路：波长峰值 → 滤波温补 → 状态 → 控制")
+    experiment_shortcuts("chain")
     module_learning_frame(
-        "理解同一条 FBG 波长流如何依次经过滤波、温补、角度反演和控制阈值判断。",
-        "先载入阈值附近噪声，再载入强滤波对照；比较噪声 RMS、理论延迟和指令一致率。",
-        "滤波窗口变大通常降低噪声，但增加响应延迟；阈值裕量越小，噪声越容易改变控制指令。",
-        "延迟按居中移动平均的理论群延迟估算；本页不模拟真实解调器峰值搜索、通信延迟或执行器动力学。",
+        '理解同一条 FBG 波长流如何依次经过滤波、温补、角度反演和控制阈值判断。',
+        '先载入推荐链路场景，再改变滤波窗口，比较噪声降低与延迟增加的取舍。',
+        '滤波窗口变大通常降低噪声，但增加响应延迟；阈值裕量越小，噪声越容易改变控制指令。',
+        '延迟按居中移动平均的理论群延迟估算；本页不模拟真实解调器峰值搜索、通信延迟或执行器动力学。',
     )
     for key, value in (
         ("chain_angle", 55.0), ("chain_noise", 0.010),
@@ -2711,7 +2867,7 @@ with chain_tab:
         )
 
     fusion_qualities = {
-        "grasp": models.ModuleQuality(1.0 if three_d_fbg_decision["is_grasped"] else 0.0, 1.0, "三维 FBG 抓稳判定"),
+        "grasp": models.ModuleQuality(1.0 if st.session_state.get("current_grasp_is_grasped", False) else 0.0, 1.0, "三维 FBG 抓稳判定"),
         "foot": models.assess_foot_quality(cop),
         "shape": models.assess_shape_quality(shape["estimated_curvature_per_m"], curvature),
         "health": models.assess_health_quality(diagnosis["status"], diagnosis["damage_index"]),
@@ -2726,6 +2882,7 @@ with chain_tab:
             st.metric(name, f"{float(quality.score) * 100:.0f}%", quality.note)
 
     st.divider()
+    export_heading("chain")
     st.subheader("实验任务与报告")
     experiment = st.selectbox("实验任务", list(experiments.CHAIN_TASK_GUIDES), key="chain_experiment")
     task_steps = experiments.CHAIN_TASK_GUIDES[experiment]
@@ -2789,14 +2946,24 @@ with chain_tab:
 
 with assembly_tab:
     st.subheader("可更换式足底组件：二维装配状态预测")
-    demo_views.render_demo("assembly", {"assembly_case": sole_assembly_case, "temperature_c": temperature})
+    experiment_shortcuts("assembly")
+    def select_assembly_case() -> None:
+        st.session_state.sole_assembly_case = st.session_state.assembly_case_choice
+
+    st.session_state.assembly_case_choice = sole_assembly_case
+    st.selectbox(
+        "选择复装工况", ["正常装配", "压入不足", "单侧错位"],
+        key="assembly_case_choice", on_change=select_assembly_case,
+    )
     st.caption("固定光纤感知芯与可更换耐磨外底/分区传力模块分离；以下是空载、恒温条件下的解析仿真预测，不是实物验收、密封或耐久结论。")
     module_learning_frame(
-        "理解空载复装筛查如何利用工作光栅、参考光栅和左右差异区分压入不足与单侧错位。",
-        "依次选择三种复装工况，再改变噪声、参考温差、密封错位和预应变保持率。",
-        "比较基线残差、左右差异、混淆矩阵、最低密封压缩率和预应变敏感性。",
-        "所有阈值与材料参数均为教学假设；密封、疲劳、耐磨和 IP 等级必须通过实物试验。",
+        '理解空载复装筛查如何利用工作光栅、参考光栅和左右差异区分压入不足与单侧错位。',
+        '在本页“选择复装工况”中依次选择正常装配、压入不足和单侧错位，比较预测结果。',
+        '比较基线残差、左右差异、混淆矩阵、最低密封压缩率和预应变敏感性。',
+        '所有阈值与材料参数均为教学假设；密封、疲劳、耐磨和 IP 等级必须通过实物试验。',
+        has_baseline=False,
     )
+    demo_views.render_demo("assembly", {"assembly_case": sole_assembly_case, "temperature_c": temperature})
     assembly = models.simulate_replaceable_sole_assembly(sole_assembly_case, temperature)
     parameters = assembly["case_parameters"]
     assembly_left, assembly_right = st.columns([1, 2])
@@ -2811,41 +2978,43 @@ with assembly_tab:
     st.markdown("**计算流程：** 设定复装工况 → 生成二维相对传力场 → 比较两枚工作光栅与一枚参考光栅 → 温度补偿 → 比较空载基线残差和左右差异 → 输出仿真筛查结果。")
     st.markdown("**边界：** 定位柱、锁止件、轴向限位、周向密封圈和柔性隔离膜在此作为结构方案边界；不计算接触应力、泄漏、材料疲劳、耐磨或 IP 等级。")
     st.divider()
-    st.subheader("装配公差与阈值敏感性")
-    tolerance_left, tolerance_right = st.columns([1, 2])
-    with tolerance_left:
-        tolerance_samples = st.slider("每工况仿真样本数", 20, 300, 100, 20)
-        tolerance_noise = st.slider("装配筛查波长噪声 (nm)", 0.0, 0.010, 0.002, 0.0005, format="%.4f")
-    tolerance_scan = models.simulate_replaceable_sole_tolerance_scan(int(tolerance_samples), temperature, tolerance_noise, int(seed))
-    with tolerance_right:
-        st.plotly_chart(visuals.assembly_tolerance_confusion_figure(tolerance_scan), width="stretch")
-        st.caption("混淆矩阵对角线越高越好，非对角格表示被误判成其他工况；样本越多、噪声越小，结果越稳定。")
-    thermal_left, thermal_right = st.columns(2)
-    with thermal_left:
-        reference_temperature_offset = st.slider("参考光栅相对温差 (°C)", -5.0, 5.0, 0.0, 0.1)
-        thermal_mismatch = models.simulate_reference_temperature_mismatch(temperature, temperature + reference_temperature_offset)
-        st.metric("温度失配引入的基线偏置", f"{float(thermal_mismatch['baseline_bias_ue']):+.1f} με")
-        st.caption(str(thermal_mismatch["validation_boundary"]))
-    with thermal_right:
-        operational_load = st.slider("比较用使用载荷 (N)", 0.0, 400.0, 180.0, 5.0)
-        operational = models.simulate_assembly_operational_load_interference(operational_load, temperature)
-        st.metric("使用载荷机械信号均值", f"{float(np.mean(operational['operational_signal_ue'])):.1f} με")
-        st.caption(f"装配自检条件：{operational['assembly_check_condition']}；{operational['validation_boundary']}。")
-    st.divider()
-    st.subheader("密封与预应变保持：试验规划敏感性")
-    seal_left, retention_right = st.columns(2)
-    with seal_left:
-        seal_nominal_compression = st.slider("名义密封压缩率", 0.05, 0.40, 0.20, 0.01)
-        seal_lateral_offset = st.slider("密封分析横向错位 (mm)", 0.0, 2.0, 0.80, 0.05)
-        seal = models.simulate_seal_compression_screen(seal_nominal_compression, seal_lateral_offset)
-        st.plotly_chart(visuals.seal_compression_screen_figure(seal), width="stretch")
-        st.caption(f"最低相对压缩率：{float(seal['minimum_compression_ratio']) * 100:.1f}%；{seal['validation_boundary']}。")
-    with retention_right:
-        retention_cycles = st.slider("规划最大循环次数", 1000, 20000, 5000, 1000)
-        assumed_retention = st.slider("假设每千次预应变保持率", 0.90, 1.00, 0.985, 0.001)
-        retention = models.simulate_preload_retention_sensitivity(retention_cycles, assumed_retention)
-        st.plotly_chart(visuals.preload_retention_sensitivity_figure(retention), width="stretch")
-        st.caption(f"{retention['validation_boundary']}；保持率为试验规划假设，不是寿命预测。")
+    with st.expander("进阶：装配公差、密封与预应变分析", expanded=False):
+        st.subheader("装配公差与阈值敏感性")
+        tolerance_left, tolerance_right = st.columns([1, 2])
+        with tolerance_left:
+            tolerance_samples = st.slider("每工况仿真样本数", 20, 300, 100, 20)
+            tolerance_noise = st.slider("装配筛查波长噪声 (nm)", 0.0, 0.010, 0.002, 0.0005, format="%.4f")
+        tolerance_scan = models.simulate_replaceable_sole_tolerance_scan(int(tolerance_samples), temperature, tolerance_noise, int(seed))
+        with tolerance_right:
+            st.plotly_chart(visuals.assembly_tolerance_confusion_figure(tolerance_scan), width="stretch")
+            st.caption("混淆矩阵对角线越高越好，非对角格表示被误判成其他工况；样本越多、噪声越小，结果越稳定。")
+        thermal_left, thermal_right = st.columns(2)
+        with thermal_left:
+            reference_temperature_offset = st.slider("参考光栅相对温差 (°C)", -5.0, 5.0, 0.0, 0.1)
+            thermal_mismatch = models.simulate_reference_temperature_mismatch(temperature, temperature + reference_temperature_offset)
+            st.metric("温度失配引入的基线偏置", f"{float(thermal_mismatch['baseline_bias_ue']):+.1f} με")
+            st.caption(str(thermal_mismatch["validation_boundary"]))
+        with thermal_right:
+            operational_load = st.slider("比较用使用载荷 (N)", 0.0, 400.0, 180.0, 5.0)
+            operational = models.simulate_assembly_operational_load_interference(operational_load, temperature)
+            st.metric("使用载荷机械信号均值", f"{float(np.mean(operational['operational_signal_ue'])):.1f} με")
+            st.caption(f"装配自检条件：{operational['assembly_check_condition']}；{operational['validation_boundary']}。")
+        st.divider()
+        st.subheader("密封与预应变保持：试验规划敏感性")
+        seal_left, retention_right = st.columns(2)
+        with seal_left:
+            seal_nominal_compression = st.slider("名义密封压缩率", 0.05, 0.40, 0.20, 0.01)
+            seal_lateral_offset = st.slider("密封分析横向错位 (mm)", 0.0, 2.0, 0.80, 0.05)
+            seal = models.simulate_seal_compression_screen(seal_nominal_compression, seal_lateral_offset)
+            st.plotly_chart(visuals.seal_compression_screen_figure(seal), width="stretch")
+            st.caption(f"最低相对压缩率：{float(seal['minimum_compression_ratio']) * 100:.1f}%；{seal['validation_boundary']}。")
+        with retention_right:
+            retention_cycles = st.slider("规划最大循环次数", 1000, 20000, 5000, 1000)
+            assumed_retention = st.slider("假设每千次预应变保持率", 0.90, 1.00, 0.985, 0.001)
+            retention = models.simulate_preload_retention_sensitivity(retention_cycles, assumed_retention)
+            st.plotly_chart(visuals.preload_retention_sensitivity_figure(retention), width="stretch")
+            st.caption(f"{retention['validation_boundary']}；保持率为试验规划假设，不是寿命预测。")
+    export_heading("assembly")
     verification_summary = (
         "可更换式足底组件验证参数摘要（仿真输入，不是实物结论）\n"
         f"装配工况：{sole_assembly_case}\n温度变化：{temperature:.1f} °C\n随机种子：{int(seed)}\n"
@@ -2856,26 +3025,27 @@ with assembly_tab:
     st.download_button("下载装配验证参数摘要", verification_summary.encode("utf-8-sig"), "replaceable_sole_verification_parameters.txt", "text/plain")
 
 with eskin_lab:
-    st.subheader("电子皮肤系统总览与机制对照")
-    st.caption(
-        "从单个触觉单元推进到光学阵列、压力场重建和动态事件判别。"
-        "本页所有数值来自透明教学模型，不能替代器件标定、实物测试或安全认证。"
-    )
-    mechanism_rows = [
-        {"机制": "压阻", "主要观测": "电阻变化", "适合观察": "静态/准静态压力", "常见干扰": "温漂、迟滞、材料蠕变"},
-        {"机制": "电容", "主要观测": "电容变化", "适合观察": "微小位移与多轴力", "常见干扰": "寄生电容、曲率、湿度"},
-        {"机制": "压电/摩擦电", "主要观测": "电荷或电压", "适合观察": "动态接触和振动", "常见干扰": "静态保持能力有限、负载阻抗"},
-        {"机制": "离子", "主要观测": "界面电容/离子迁移", "适合观察": "柔软界面与大形变", "常见干扰": "频率、含水量、封装"},
-        {"机制": "FBG 光学", "主要观测": "Bragg 波长变化", "适合观察": "抗电磁干扰、多点复用", "常见干扰": "温度、封装传力、解调带宽"},
-    ]
-    st.dataframe(mechanism_rows, width="stretch", hide_index=True)
-    with st.expander("如何选择机制与评价指标", expanded=False):
-        st.markdown(
-            "- **先定义任务**：静态压力、动态滑移、温度或曲率需要不同观测量。\n"
-            "- **再看可辨识性**：通道数多不等于三轴力一定可分离，应检查灵敏度矩阵的秩和条件数。\n"
-            "- **最后看系统链路**：封装、参考结构、采样率、解调器和重建算法都会改变最终性能。\n"
-            "- **统一报告误差**：同时给出载荷、位置、压力场和重复性指标，不用单一准确率概括全部能力。"
+    with st.expander("电子皮肤机制对照与使用边界", expanded=False):
+        st.subheader("电子皮肤系统总览与机制对照")
+        st.caption(
+            "从单个触觉单元推进到光学阵列、压力场重建和动态事件判别。"
+            "本页所有数值来自透明教学模型，不能替代器件标定、实物测试或安全认证。"
         )
+        mechanism_rows = [
+            {"机制": "压阻", "主要观测": "电阻变化", "适合观察": "静态/准静态压力", "常见干扰": "温漂、迟滞、材料蠕变"},
+            {"机制": "电容", "主要观测": "电容变化", "适合观察": "微小位移与多轴力", "常见干扰": "寄生电容、曲率、湿度"},
+            {"机制": "压电/摩擦电", "主要观测": "电荷或电压", "适合观察": "动态接触和振动", "常见干扰": "静态保持能力有限、负载阻抗"},
+            {"机制": "离子", "主要观测": "界面电容/离子迁移", "适合观察": "柔软界面与大形变", "常见干扰": "频率、含水量、封装"},
+            {"机制": "FBG 光学", "主要观测": "Bragg 波长变化", "适合观察": "抗电磁干扰、多点复用", "常见干扰": "温度、封装传力、解调带宽"},
+        ]
+        st.dataframe(mechanism_rows, width="stretch", hide_index=True)
+        with st.expander("如何选择机制与评价指标", expanded=False):
+            st.markdown(
+                "- **先定义任务**：静态压力、动态滑移、温度或曲率需要不同观测量。\n"
+                "- **再看可辨识性**：通道数多不等于三轴力一定可分离，应检查灵敏度矩阵的秩和条件数。\n"
+                "- **最后看系统链路**：封装、参考结构、采样率、解调器和重建算法都会改变最终性能。\n"
+                "- **统一报告误差**：同时给出载荷、位置、压力场和重复性指标，不用单一准确率概括全部能力。"
+            )
 
     def load_eskin_preset() -> None:
         preset = eskin_experiments.ESKIN_PRESETS[st.session_state.eskin_preset]
@@ -2911,13 +3081,14 @@ with eskin_lab:
 
     with taxel_tab:
         st.subheader("三轴触觉单元：主动/参考信号与力反演")
-        taxel_demo_slot = st.container()
+        experiment_shortcuts("taxel")
         module_learning_frame(
-            "理解五个电容通道如何分离 Fx、Fy、Fz，并观察参考结构对温度、曲率和应变共模的校正作用。",
-            "先保存默认工况为基线 A，再提高温度或降低参考匹配度，比较原始与校正后的力误差。",
-            "关注灵敏度矩阵的秩、条件数、三轴分量误差，以及参考校正是否真的降低共模误差。",
-            "灵敏度矩阵为透明教学参数，不代表某款电子皮肤器件的实测标定矩阵。",
+            '理解五个电容通道如何分离 Fx、Fy、Fz，并观察参考结构对温度、曲率和应变共模的校正作用。',
+            '先保持默认条件，改变一个方向的力；保存基线后再升高温度，比较校正前后的误差。',
+            '关注灵敏度矩阵的秩、条件数、三轴分量误差，以及参考校正是否真的降低共模误差。',
+            '灵敏度矩阵为透明教学参数，不代表某款电子皮肤器件的实测标定矩阵。',
         )
+        taxel_demo_slot = st.container()
         taxel_controls, taxel_display = st.columns([1.0, 1.7], gap="large")
         with taxel_controls:
             eskin_fx = st.slider("切向力 Fx (N)", -5.0, 5.0, 2.0, 0.1, key="eskin_fx_n")
@@ -2943,6 +3114,7 @@ with eskin_lab:
                 "curvature_per_m": eskin_curvature, "strain_fraction": eskin_strain_milli / 1000.0,
                 "temperature_c": eskin_taxel_temperature, "noise_pf": eskin_noise_pf,
                 "reference_match": eskin_reference_match, "seed": int(seed),
+                "inspection_channel": st.session_state.get("taxel_inspect_channel", 0),
             })
         with taxel_display:
             taxel_metrics = st.columns(4)
@@ -2962,11 +3134,19 @@ with eskin_lab:
             for index, label in enumerate(("Fx", "Fy", "Fz"))
         ]
         st.dataframe(force_table, width="stretch", hide_index=True)
+        demo_views.inspector_navigation("taxel")
+        taxel_inspector.render(taxel_result)
+        taxel_comparison.render(dict(
+            fx_n=eskin_fx, fy_n=eskin_fy, fz_n=eskin_fz,
+            curvature_per_m=eskin_curvature, strain_fraction=eskin_strain_milli / 1000.0,
+            temperature_c=eskin_taxel_temperature, noise_pf=eskin_noise_pf, seed=int(seed),
+        ))
         current_taxel_metrics = {
             "校正后力 MAE": round(taxel_result["corrected_mae_n"], 4),
             "校正前力 MAE": round(taxel_result["raw_mae_n"], 4),
             "矩阵条件数": round(taxel_result["condition_number"], 3),
         }
+        export_heading("taxel")
         if st.button("保存三轴单元基线 A", key="save_eskin_taxel_baseline"):
             st.session_state.eskin_taxel_baseline = current_taxel_metrics
         if st.session_state.get("eskin_taxel_baseline"):
@@ -3008,13 +3188,14 @@ with eskin_lab:
 
     with optical_skin_tab:
         st.subheader("FBG 光学皮肤：感受野、温补与压力质心")
-        skin_demo_slot = st.container()
+        experiment_shortcuts("skin")
         module_learning_frame(
-            "理解有限数量的 FBG 如何通过重叠感受野编码接触位置与合力。",
-            "比较 4、8、16 个传感点，并在单点和双点之间切换；再提高温度或噪声观察补偿结果。",
-            "观察波长空间分布、温度共模、估计载荷和压力质心定位误差。",
-            "双点接触只评价载荷质心，不声称仅凭当前响应唯一分离两个接触点。",
+            '理解有限数量的 FBG 如何通过重叠感受野编码接触位置与合力。',
+            '先保持默认接触位置，改变压力或传感点数量；随后移动接触位置，观察质心估计。',
+            '观察波长空间分布、温度共模、估计载荷和压力质心定位误差。',
+            '双点接触只评价载荷质心，不声称仅凭当前响应唯一分离两个接触点。',
         )
+        skin_demo_slot = st.container()
         fbg_controls, fbg_display = st.columns([1.0, 1.7], gap="large")
         with fbg_controls:
             fbg_sensor_count = st.select_slider("FBG 数量", options=[4, 8, 16], value=8, key="eskin_fbg_sensor_count")
@@ -3045,6 +3226,7 @@ with eskin_lab:
                 "skin_width_mm": skin_width, "skin_height_mm": skin_height,
                 "receptive_width_mm": receptive_width, "temperature_c": fbg_temperature,
                 "noise_nm": fbg_noise_nm, "seed": int(seed),
+                "inspection_channel": min(st.session_state.get("skin_inspect_channel", 0), fbg_sensor_count - 1),
             })
         with fbg_display:
             fbg_metrics = st.columns(4)
@@ -3054,11 +3236,15 @@ with eskin_lab:
             fbg_metrics[3].metric("温度共模", f"{fbg_skin_result['temperature_shift_nm']:.3f} nm")
             st.plotly_chart(eskin_visuals.fbg_skin_figure(fbg_skin_result, skin_width, skin_height), width="stretch")
         st.dataframe(eskin_experiments.eskin_result_records("光学皮肤", fbg_skin_result), width="stretch", hide_index=True)
+        demo_views.inspector_navigation("skin")
+        skin_inspector.render(fbg_skin_result, skin_width, skin_height, touches)
+        skin_comparison.render(skin_width, skin_height, receptive_width, sum(t[2] for t in touches), fbg_noise_nm)
         current_fbg_metrics = {
             "载荷误差 (N)": round(fbg_skin_result["load_error_n"], 4),
             "质心定位误差 (mm)": round(fbg_skin_result["location_error_mm"], 3),
             "传感点数": fbg_sensor_count,
         }
+        export_heading("skin")
         if st.button("保存光学皮肤基线 A", key="save_eskin_fbg_baseline"):
             st.session_state.eskin_fbg_baseline = current_fbg_metrics
         if st.session_state.get("eskin_fbg_baseline"):
@@ -3091,13 +3277,14 @@ with eskin_lab:
 
     with pressure_tab:
         st.subheader("稀疏压力重建：采样、插值与误差")
-        pressure_demo_slot = st.container()
+        experiment_shortcuts("pressure")
         module_learning_frame(
-            "理解稀疏通道如何映射为致密压力场，并用多项指标评价信息损失。",
-            "从 4×4 切换到 8×8 采样，比较单点、双点、边缘接触和滑动前兆。",
-            "同时观察 RMSE、峰值、质心、总载荷和通道节省率，不只看热图是否相似。",
-            "当前为透明高斯核插值，不代表神经网络或超维计算算法的实测性能。",
+            '理解稀疏通道如何映射为致密压力场，并用多项指标评价信息损失。',
+            '先看默认压力场，再改变稀疏采样网格；比较原始场、重建场和误差。',
+            '同时观察 RMSE、峰值、质心、总载荷和通道节省率，不只看热图是否相似。',
+            '当前为透明高斯核插值，不代表神经网络或超维计算算法的实测性能。',
         )
+        pressure_demo_slot = st.container()
         pressure_controls, pressure_display = st.columns([1.0, 1.9], gap="large")
         with pressure_controls:
             pressure_scenario = st.selectbox("压力场场景", ["单点接触", "双点接触", "边缘接触", "滑动前兆"], key="eskin_pressure_scenario")
@@ -3116,6 +3303,10 @@ with eskin_lab:
                 "scenario": pressure_scenario, "sparse_size": sparse_size, "output_size": output_size,
                 "peak_pressure_kpa": peak_pressure, "bandwidth": kernel_bandwidth,
                 "noise_kpa": pressure_noise, "seed": int(seed),
+                "inspection_node": [
+                    min(st.session_state.get("pressure_inspect_row", output_size // 2), output_size - 1),
+                    min(st.session_state.get("pressure_inspect_col", output_size // 2), output_size - 1),
+                ],
             })
         with pressure_display:
             pressure_metrics = st.columns(5)
@@ -3125,12 +3316,16 @@ with eskin_lab:
             pressure_metrics[3].metric("总载荷误差", f"{pressure_result['total_force_error_pct']:.1f}%")
             pressure_metrics[4].metric("通道节省率", f"{pressure_result['channel_saving_pct']:.1f}%")
             st.plotly_chart(eskin_visuals.pressure_reconstruction_figure(pressure_result), width="stretch")
+        demo_views.inspector_navigation("pressure")
+        pressure_inspector.render(pressure_result, kernel_bandwidth)
+        pressure_comparison.render(pressure_scenario, peak_pressure, output_size)
         current_pressure_metrics = {
             "RMSE (kPa)": round(pressure_result["rmse_kpa"], 3),
             "质心误差 (%)": round(pressure_result["centroid_error_pct"], 2),
             "总载荷误差 (%)": round(pressure_result["total_force_error_pct"], 2),
             "通道节省率 (%)": round(pressure_result["channel_saving_pct"], 2),
         }
+        export_heading("pressure")
         if st.button("保存压力重建基线 A", key="save_eskin_pressure_baseline"):
             st.session_state.eskin_pressure_baseline = current_pressure_metrics
         if st.session_state.get("eskin_pressure_baseline"):
@@ -3164,13 +3359,14 @@ with eskin_lab:
 
     with dynamic_tab:
         st.subheader("动态滑移与多模态决策")
-        dynamic_demo_slot = st.container()
+        experiment_shortcuts("dynamic")
         module_learning_frame(
-            "把法向力、剪切力、压力质心运动和温度放到同一时间轴上，理解多条件告警。",
-            "比较稳定按压、载荷爬升、横向滑动、即将滑移、热物体和温漂，再提高噪声进行重复采样。",
-            "观察剪切比是否越阈、稳定接触窗口内的质心速度峰值是否也越阈，以及重复试验中告警率是否稳定。",
-            "阈值是教学设置，实际系统必须按材料、封装、接触速度与采样链重新标定。",
+            '把法向力、剪切力、压力质心运动和温度放到同一时间轴上，理解多条件告警。',
+            '先选择一个动态事件，再调整滑移判定阈值；观察时间曲线、告警状态和阈值裕度。',
+            '观察剪切比是否越阈、稳定接触窗口内的质心速度峰值是否也越阈，以及重复试验中告警率是否稳定。',
+            '阈值是教学设置，实际系统必须按材料、封装、接触速度与采样链重新标定。',
         )
+        dynamic_demo_slot = st.container()
         dynamic_controls, dynamic_display = st.columns([1.0, 1.8], gap="large")
         with dynamic_controls:
             dynamic_event = st.selectbox("动态事件", ["稳定按压", "载荷爬升", "横向滑动", "即将滑移", "热物体", "温漂"], key="eskin_dynamic_event")
@@ -3193,6 +3389,7 @@ with eskin_lab:
                 "duration_s": dynamic_duration, "normal_force_n": dynamic_force,
                 "slip_threshold": slip_threshold, "temperature_c": dynamic_temperature,
                 "noise_ratio": dynamic_noise, "seed": int(seed),
+                "inspection_index": min(st.session_state.get("dynamic_inspect_index", len(dynamic_result["time_s"]) // 2), len(dynamic_result["time_s"]) - 1),
             })
         repeat_result = eskin.repeat_dynamic_event(
             dynamic_event, repeats=repeat_count,
@@ -3209,6 +3406,13 @@ with eskin_lab:
             dynamic_metrics[3].metric("质心峰值速度", f"{dynamic_result['peak_centroid_speed_mm_s']:.1f} mm/s")
             dynamic_metrics[4].metric("重复告警率", f"{repeat_result['alert_rate_pct']:.1f}%")
             st.plotly_chart(eskin_visuals.dynamic_event_figure(dynamic_result), width="stretch")
+        demo_views.inspector_navigation("dynamic")
+        dynamic_inspector.render(dynamic_result, dynamic_duration, dynamic_force, slip_threshold)
+        dynamic_comparison.render(dict(
+            event=dynamic_event, sample_rate_hz=dynamic_sample_rate,
+            duration_s=dynamic_duration, normal_force_n=dynamic_force,
+            temperature_c=dynamic_temperature, noise_ratio=dynamic_noise, seed=int(seed),
+        ))
         if dynamic_event == "即将滑移":
             st.caption("本预设的剪切载荷也随阈值生成；调节阈值会重新生成事件，不等于对同一条记录单独重判。")
         if dynamic_result["alert"]:
@@ -3228,6 +3432,7 @@ with eskin_lab:
             "质心峰值速度 (mm/s)": round(dynamic_result["peak_centroid_speed_mm_s"], 3),
             "重复告警率 (%)": round(repeat_result["alert_rate_pct"], 2),
         }
+        export_heading("dynamic")
         if st.button("保存动态事件基线 A", key="save_eskin_dynamic_baseline"):
             st.session_state.eskin_dynamic_baseline = current_dynamic_metrics
         if st.session_state.get("eskin_dynamic_baseline"):

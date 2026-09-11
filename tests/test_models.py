@@ -1052,7 +1052,7 @@ def test_anthropomorphic_hand_uses_fixed_axes_and_interpolates_only_the_hand_bef
     assert 'new THREE.AxesHelper(2.0)' in markup
     assert 'camera.position.set(16,-18,14)' in markup
     assert 'armPivots.forEach((pivot,index)=>' in markup
-    assert 'applyFingerData(finger,cfg.previousFingerCapsules[index],cfg.fingerCapsules[index],eased)' in markup
+    assert 'applyFingerData(finger,cfg.previousFingerCapsules[index],cfg.fingerCapsules[index],fingerEased)' in markup
     assert 'if(!cfg.grasped)can.position.set(cfg.canOffset[0]+canStart.x,cfg.canOffset[1]+canStart.y,cfg.canOffset[2]+canStart.z)' in markup
 
 
@@ -1221,8 +1221,9 @@ def test_three_d_layout_keeps_commands_and_model_in_the_primary_split():
         'with st.container(key="three_d_grasp_metrics"):'
     )
     assert display_context.index("embedded_view.render_html(") < display_context.index(
-        'with st.expander("查看抓稳条件与当前读数"'
+        'st.dataframe([{"判定条件": name'
     )
+    assert 'with st.expander("查看抓稳条件与当前读数"' not in display_context
 
 
 def test_app_uses_plotly_bar_figures_instead_of_streamlit_bar_charts():

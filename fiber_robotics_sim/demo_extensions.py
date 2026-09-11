@@ -6,8 +6,12 @@ from . import eskin, experiments, models
 
 
 def distributed_demo(parameters: dict) -> dict:
+    parameters = dict(parameters)
+    selected = parameters.pop('inspection_index', None)
     result = experiments.run_distributed_experiment(parameters)['results']
     positions, profile = result['profile_position_mm'], result['profile_value']
+    if selected is not None:
+        selected = max(0, min(int(selected), len(positions) - 1))
     background = float(np.median(profile))
     valid = result['localization_valid']
     estimate = result['estimated_event_position_mm'] if valid else None
@@ -23,10 +27,13 @@ def distributed_demo(parameters: dict) -> dict:
                         ['定位误差', f"{result['location_error_mm']:.1f} mm" if valid else '不适用']],
         })
     return {
-        'kind': 'distributed', 'title': '沿着光纤找到局部事件' if parameters['mode'] != 'Brillouin' else '观察温度与应变的叠加响应', 'subtitle': parameters['mode'] + ' · 空间剖面读取',
+        'kind': 'distributed', 'title': '沿着光纤找到局部事件' if parameters['mode'] != 'Brillouin' else '观察温度与应变的叠加响应', 'subtitle': parameters['mode'] + ' · 空间剖面读取' + (f' · D-{positions[selected]:.3f}mm' if selected is not None else ''),
+        'current_label': '观察器位置' if selected is not None else '当前参数',
+        'inspection_index': selected,
+        'inspection_text': ('紫色方标为观察器所选空间采样位置，不是事件定位；播放只改变读取游标，不回写观察器。点击‘观察器位置’返回选点。' if selected is not None else ''),
         'boundary': '空间位置沿用原实验毫米坐标，曲线高度按相对背景变化归一化，仅用于看清剖面。DAS 展示时间窗内最大振幅，不是瞬时波形；播放时间不代表光传播时间。',
         'legend': '青线：完整剖面 · 橙线：已读取部分 · 白标：真实位置 · 橙标：峰值定位',
-        'frames': frames, 'initial_index': len(frames) - 1, 'positions': positions, 'profile': profile,
+        'frames': frames, 'initial_index': selected if selected is not None else len(frames) - 1, 'positions': positions, 'profile': profile,
         'background': background, 'length': float(parameters['fiber_length_mm']), 'unit': result['unit'],
         'truth': float(parameters['event_position_mm']) if valid else None, 'estimate': estimate,
         'signal_title': f"{result['observable']} · {result['unit']}", 'labels': ['当前采样值', '相对背景变化'],
@@ -112,7 +119,11 @@ def optical_demo(parameters: dict) -> dict:
 
 def dynamic_demo(parameters: dict) -> dict:
     """Replay original offline samples; accumulate the original window-peak rule."""
+    parameters = dict(parameters)
+    selected = parameters.pop('inspection_index', None)
     result = eskin.simulate_dynamic_skin_event(**parameters)
+    if selected is not None:
+        selected = max(0, min(int(selected), len(result['time_s']) - 1))
     peak_ratio = peak_speed = 0.0
     frames = []
     for i, time in enumerate(result['time_s']):
@@ -127,12 +138,14 @@ def dynamic_demo(parameters: dict) -> dict:
             peak_speed = max(peak_speed, abs(fields['speed']))
         alert = bool(peak_ratio > parameters['slip_threshold'] and peak_speed > 2) if settled else None
         status = '建立接触，尚未进入判定窗口' if alert is None else '窗口峰值触发风险' if alert else '窗口峰值未触发风险'
+        contact = fields['normal'] > max(.05 * parameters['normal_force_n'], 1e-9)
+        ratio_text = f"{fields['ratio']:.3f}" if contact else '未定义（低法向力）'
         frames.append({
             **fields, 'progress': i / (len(result['time_s']) - 1),
             'peak_ratio': peak_ratio if settled else None, 'peak_speed': peak_speed if settled else None,
             'alert': alert, 'signals': [fields['normal'], fields['shear']],
             'contact': fields['normal'] > max(.05 * parameters['normal_force_n'], 1e-9),
-            'caption': f"{status}。当前剪切比 {fields['ratio']:.3f}，质心速度 {fields['speed']:+.2f} mm/s。"
+            'caption': f"{status}。当前剪切比 {ratio_text}，质心速度 {fields['speed']:+.2f} mm/s。"
             + f"从记录 20% 起累计峰值：剪切比 > {parameters['slip_threshold']:.2f} 且速度 > 2 mm/s，不要求同一时刻越阈。",
             'metrics': [['记录时间', f"{time:.3f} s"], ['当前温度', f"{fields['temperature']:.1f} °C"],
                         ['窗口剪切比峰值', f'{peak_ratio:.3f}' if settled else '等待接触'],
@@ -140,10 +153,12 @@ def dynamic_demo(parameters: dict) -> dict:
         })
     return {
         'kind': 'dynamic', 'title': '看见接触变化，读懂滑移判据',
-        'subtitle': parameters['event'] + ' · 多模态离线记录回放',
+        'subtitle': parameters['event'] + ' · 多模态离线记录回放' + (f" · 观察器 FRAME-{selected:04d}" if selected is not None else ''),
+        'current_label': '观察器时刻' if selected is not None else '当前参数',
+        'inspection_text': ('观察器定位到所选采样帧；播放仅改变本面板，不回写观察器。灯为截至回放时刻的累计判据，下方结论为整段记录判定。' if selected is not None else ''),
         'boundary': '质心标记不是物体轨迹；箭头长度示意力大小，方向仅作说明，面板颜色表示温升，不重建压力场。离线速度含相邻采样信息，不是因果实时检测；阈值需实测标定。',
         'legend': '橙环：质心 · 青/黄箭：法向/剪切力 · 面板青→红：温升 · 判据灯灰/青/红：等待/未触发/风险',
-        'frames': frames, 'initial_index': len(frames) - 1,
+        'frames': frames, 'initial_index': selected if selected is not None else len(frames) - 1,
         'force_max': max(1e-9, max(max(f['signals']) for f in frames)),
         'initial_temperature': parameters['temperature_c'],
         'playback_duration_ms': float(result['time_s'][-1]) * 1000,
